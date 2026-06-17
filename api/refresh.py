@@ -17,6 +17,7 @@ Stores the raw the-odds-api JSON as a blob row in Turso (table auto-created).
 Stdlib only, no dependencies.
 """
 
+import hmac
 import json
 import os
 import urllib.error
@@ -151,17 +152,26 @@ def turso(statements: list) -> list:
     return results
 
 
-def store_snapshot(scope, regions, markets, payload, credits, event_id=None):
+INSERT_SQL = (
+    "INSERT INTO odds_snapshots "
+    "(fetched_at, sport, regions, markets, scope, event_id, "
+    " credits_remaining, credits_cost, payload) "
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+)
+
+
+def _insert_stmt(scope, regions, markets, payload, credits, event_id=None):
+    """Build a (sql, args) tuple for one snapshot insert."""
     now = datetime.now(timezone.utc).isoformat()
-    turso([(
-        "INSERT INTO odds_snapshots "
-        "(fetched_at, sport, regions, markets, scope, event_id, "
-        " credits_remaining, credits_cost, payload) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [now, WORLD_CUP_KEY, regions, markets, scope, event_id,
-         credits.get("remaining"), credits.get("cost"),
-         json.dumps(payload, separators=(",", ":"))],
-    )])
+    return (INSERT_SQL, [
+        now, WORLD_CUP_KEY, regions, markets, scope, event_id,
+        credits.get("remaining"), credits.get("cost"),
+        json.dumps(payload, separators=(",", ":")),
+    ])
+
+
+def store_snapshot(scope, regions, markets, payload, credits, event_id=None):
+    turso([_insert_stmt(scope, regions, markets, payload, credits, event_id)])
 
 
 # --- refresh modes ---------------------------------------------------------
@@ -201,19 +211,35 @@ def refresh_deep(regions, markets, window_hours, max_credits):
     upcoming.sort(key=lambda e: e.get("commence_time") or "")
 
     max_events = max_credits // cost_per_event
+    if max_events == 0:
+        raise AppError(
+            422,
+            f"max_credits ({max_credits}) is below the per-event cost "
+            f"({cost_per_event}). Raise max_credits or reduce markets/regions.",
+        )
+    max_events = min(max_events, 15)  # bound serverless run time
     selected = upcoming[:max_events]
 
+    # Fetch sequentially, then write all rows in a single Turso pipeline to
+    # minimise round-trips and serverless timeout risk.
     rows, spent, last_remaining = 0, 0, None
+    statements = []
     for e in selected:
         data, credits = get_json(
             f"/sports/{WORLD_CUP_KEY}/events/{e['id']}/odds",
             {"regions": regions, "markets": markets,
              "oddsFormat": "decimal", "dateFormat": "iso"},
         )
-        store_snapshot("event", regions, markets, data, credits, event_id=e["id"])
+        statements.append(
+            _insert_stmt("event", regions, markets, data, credits, event_id=e["id"])
+        )
         rows += 1
-        spent += credits.get("cost") or cost_per_event
+        cost = credits.get("cost")
+        spent += cost if cost is not None else cost_per_event
         last_remaining = credits.get("remaining")
+
+    if statements:
+        turso(statements)
 
     return {
         "mode": "deep",
@@ -251,8 +277,16 @@ class handler(BaseHTTPRequestHandler):
 
             if mode == "deep":
                 markets = qs.get("markets", [DEEP_MARKETS])[0]
-                window_hours = int(qs.get("window_hours", ["48"])[0])
-                max_credits = int(qs.get("max_credits", ["50"])[0])
+                try:
+                    window_hours = int(qs.get("window_hours", ["48"])[0])
+                    max_credits = int(qs.get("max_credits", ["50"])[0])
+                    if window_hours < 1 or max_credits < 1:
+                        raise ValueError
+                except ValueError:
+                    raise AppError(
+                        422,
+                        "window_hours and max_credits must be positive integers.",
+                    )
                 summary = refresh_deep(regions, markets, window_hours, max_credits)
             else:
                 markets = qs.get("markets", [FEATURED_MARKETS])[0]
@@ -270,7 +304,7 @@ class handler(BaseHTTPRequestHandler):
             return  # not configured -> allow (dev); set CRON_SECRET to protect credits
         header = self.headers.get("Authorization", "")
         provided = header[7:] if header.startswith("Bearer ") else qs.get("key", [""])[0]
-        if provided != secret:
+        if not hmac.compare_digest(provided, secret):
             raise AppError(401, "Unauthorized: missing or wrong CRON_SECRET.")
 
     def _send(self, status: int, obj: dict):

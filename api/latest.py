@@ -81,7 +81,7 @@ def turso_query(sql: str, args: list) -> list:
     cols = [c["name"] for c in result.get("cols", [])]
     rows = []
     for raw in result.get("rows", []):
-        rows.append({cols[i]: _cell(raw[i]) for i in range(len(cols))})
+        rows.append({col: _cell(val) for col, val in zip(cols, raw)})
     return rows
 
 
@@ -103,7 +103,13 @@ class handler(BaseHTTPRequestHandler):
             qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
 
             if qs.get("list", ["false"])[0].lower() in ("1", "true", "yes"):
-                limit = min(int(qs.get("limit", ["50"])[0]), 200)
+                try:
+                    limit = int(qs.get("limit", ["50"])[0])
+                    if limit < 1:
+                        raise ValueError
+                except ValueError:
+                    raise AppError(422, "limit must be a positive integer.")
+                limit = min(limit, 200)
                 rows = turso_query(
                     "SELECT id, fetched_at, scope, event_id, markets, "
                     "credits_remaining, credits_cost FROM odds_snapshots "

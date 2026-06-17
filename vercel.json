@@ -1,5 +1,8 @@
 {
   "crons": [
     { "path": "/api/refresh", "schedule": "0 6 * * *" }
-  ]
+  ],
+  "functions": {
+    "api/refresh.py": { "maxDuration": 60 }
+  }
 }
