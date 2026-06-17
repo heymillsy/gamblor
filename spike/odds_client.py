@@ -48,7 +48,10 @@ def get(path: str, params: dict | None = None) -> object:
     params = dict(params or {})
     params["apiKey"] = _api_key()
 
-    resp = requests.get(f"{BASE_URL}{path}", params=params, timeout=30)
+    try:
+        resp = requests.get(f"{BASE_URL}{path}", params=params, timeout=30)
+    except requests.RequestException as e:  # connection/timeout/DNS
+        raise OddsApiError(f"Request to {path} failed: {e}") from e
 
     # Credit budget lives in the response headers on every call.
     remaining = resp.headers.get("x-requests-remaining")
@@ -61,7 +64,13 @@ def get(path: str, params: dict | None = None) -> object:
         )
 
     if resp.status_code == 200:
-        return resp.json()
+        try:
+            return resp.json()
+        except ValueError as e:  # malformed/empty JSON body on a 200
+            raise OddsApiError(
+                f"Got HTTP 200 but could not decode JSON: {e}\n"
+                f"Response body: {resp.text[:500]}"
+            ) from e
 
     hints = {
         401: "Unauthorized - the API key is missing or invalid.",

@@ -28,13 +28,13 @@ def main() -> int:
     for m in matches:
         print(f"=== {m.get('home_team')} vs {m.get('away_team')} "
               f"({m.get('commence_time')}) ===")
-        tab = next((b for b in m.get("bookmakers", [])
+        tab = next((b for b in (m.get("bookmakers") or [])
                     if b.get("key") == TAB_KEY), None)
         if not tab:
             print("  TAB: not offered for this match\n")
             continue
         print(f"  TAB (last_update={tab.get('last_update')}):")
-        for market in tab.get("markets", []):
+        for market in (tab.get("markets") or []):
             print(f"    market '{market.get('key')}':")
             for o in market.get("outcomes", []):
                 point = f" point={o['point']}" if "point" in o else ""

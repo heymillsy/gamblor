@@ -26,7 +26,7 @@ def main() -> int:
     print(f"Soccer competitions available ({len(soccer)}):")
     for s in soccer:
         active = "active" if s.get("active") else "INACTIVE"
-        marker = "  <-- World Cup" if s["key"] == WORLD_CUP_KEY else ""
+        marker = "  <-- World Cup" if s.get("key") == WORLD_CUP_KEY else ""
         print(f"  [{active:8}] {s['key']:32} {s.get('title', '')}{marker}")
 
     wc = next((s for s in sports if s.get("key") == WORLD_CUP_KEY), None)

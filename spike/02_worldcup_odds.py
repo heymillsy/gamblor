@@ -23,7 +23,7 @@ def tab_h2h(bookmakers: list) -> list | None:
     tab = next((b for b in bookmakers if b.get("key") == TAB_KEY), None)
     if not tab:
         return None
-    h2h = next((m for m in tab.get("markets", []) if m.get("key") == "h2h"), None)
+    h2h = next((m for m in (tab.get("markets") or []) if m.get("key") == "h2h"), None)
     return h2h.get("outcomes") if h2h else None
 
 
@@ -54,14 +54,15 @@ def main() -> int:
 
     tab_count = 0
     for m in matches:
-        books = m.get("bookmakers", [])
+        books = m.get("bookmakers") or []
         outcomes = tab_h2h(books)
         if outcomes:
             tab_count += 1
         print(f"{m.get('home_team')} vs {m.get('away_team')}  "
               f"@ {m.get('commence_time')}")
+        keys = [b.get("key") for b in books if b.get("key")]
         print(f"  bookmakers returned: {len(books)} "
-              f"({', '.join(b.get('key') for b in books) or 'none'})")
+              f"({', '.join(keys) or 'none'})")
         if outcomes:
             prices = "  ".join(f"{o['name']}={o['price']}" for o in outcomes)
             print(f"  TAB h2h: {prices}")
