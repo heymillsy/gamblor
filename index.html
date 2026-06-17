@@ -21,9 +21,17 @@
   <h1>⚽ gamblor</h1>
   <p class="sub">FIFA World Cup odds via the-odds-api, served from Vercel.</p>
 
-  <h2>Endpoints</h2>
+  <h2>Live (calls the-odds-api)</h2>
   <a class="btn" href="/api/worldcup">/api/worldcup — World Cup odds (TAB, h2h)</a>
   <a class="btn" href="/api/sports?soccer=true">/api/sports?soccer=true — soccer competitions</a>
+
+  <h2>Stored (reads Turso, 0 credits)</h2>
+  <a class="btn" href="/api/latest">/api/latest — latest stored featured snapshot</a>
+  <a class="btn" href="/api/latest?list=true">/api/latest?list=true — snapshot history</a>
+  <p class="note">Storing happens via <code>/api/refresh</code> (secret-protected;
+  runs daily by cron). Trigger manually with
+  <code>/api/refresh?key=YOUR_CRON_SECRET</code>, or a deep extra-markets sweep
+  with <code>/api/refresh?mode=deep&amp;key=YOUR_CRON_SECRET</code>.</p>
 
   <h3>Query options for <code>/api/worldcup</code></h3>
   <ul>
