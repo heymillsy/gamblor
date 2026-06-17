@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>gamblor — World Cup odds API</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto;
+           padding: 0 1rem; line-height: 1.5; }
+    h1 { margin-bottom: 0; }
+    .sub { color: #888; margin-top: .25rem; }
+    a.btn { display: block; padding: .8rem 1rem; margin: .6rem 0; border-radius: .6rem;
+            background: #1463ff; color: #fff; text-decoration: none; font-weight: 600; }
+    code { background: rgba(127,127,127,.18); padding: .1rem .35rem; border-radius: .3rem; }
+    .note { font-size: .9rem; color: #888; }
+    li { margin: .3rem 0; }
+  </style>
+</head>
+<body>
+  <h1>⚽ gamblor</h1>
+  <p class="sub">FIFA World Cup odds via the-odds-api, served from Vercel.</p>
+
+  <h2>Endpoints</h2>
+  <a class="btn" href="/api/worldcup">/api/worldcup — World Cup odds (TAB, h2h)</a>
+  <a class="btn" href="/api/sports?soccer=true">/api/sports?soccer=true — soccer competitions</a>
+
+  <h3>Query options for <code>/api/worldcup</code></h3>
+  <ul>
+    <li><code>regions</code> — default <code>au</code> (Australian books incl. TAB)</li>
+    <li><code>markets</code> — default <code>h2h</code>; e.g. <code>h2h,totals,spreads</code></li>
+    <li><code>bookmaker</code> — default <code>tab</code>; use <code>all</code> for every book</li>
+    <li><code>format</code> — <code>simple</code> (default) or <code>raw</code></li>
+  </ul>
+  <p>Example: <a href="/api/worldcup?bookmaker=all&markets=h2h,totals">/api/worldcup?bookmaker=all&amp;markets=h2h,totals</a></p>
+
+  <p class="note">If you see an <code>ODDS_API_KEY is not set</code> error, add the
+  environment variable in Vercel → Project → Settings → Environment Variables,
+  then redeploy. Get a free key at the-odds-api.com.</p>
+</body>
+</html>

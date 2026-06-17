@@ -1,0 +1,11 @@
+# Secrets
+.env
+
+# Spike raw API responses
+spike/data/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/

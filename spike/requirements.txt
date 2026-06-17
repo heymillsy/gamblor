@@ -1,0 +1,4 @@
+requests>=2.31
+# Optional: lets the scripts read spike/.env automatically. If you can't install
+# it, just `export ODDS_API_KEY=...` instead.
+python-dotenv>=1.0
