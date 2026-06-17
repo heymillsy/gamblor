@@ -33,6 +33,7 @@ permissive CORS.
 | `GET /api/worldcup` | Live World Cup odds, TAB only, h2h (moneyline) | ~1 |
 | `GET /api/sports?soccer=true` | Available soccer competitions | 0 |
 | `GET /api/refresh` | Fetch odds and **store** them in Turso (secret-gated) | 3 (featured) |
+| `GET /api/match` | Deep extra-markets sweep for **one match** by id (secret-gated) | #markets |
 | `GET /api/latest` | Read the latest **stored** snapshot from Turso | 0 |
 
 ### Storing odds over time (`/api/refresh` → Turso)
@@ -49,6 +50,12 @@ Trigger it manually in a browser with `?key=YOUR_CRON_SECRET`.
 Deep-mode query options: `window_hours` (default 48 — only imminent matches),
 `max_credits` (default 50 — hard spend cap; it fetches at most
 `max_credits ÷ markets` matches), `markets` (override the extra-market list).
+
+**Single match:** `GET /api/match?event_id=ID&key=…` sweeps all extra markets
+for one match and stores it (cost = `#markets`, default 6 credits). Get the
+`id` from `/api/worldcup` or `/api/latest`. Accepts `id`/`match_id` as aliases
+and a `markets=` override. The response includes the stored odds so you see them
+immediately.
 
 Read it back with:
 - `GET /api/latest` — newest featured snapshot (parsed payload + metadata)
@@ -86,6 +93,8 @@ quota.
   the-odds-api and return trimmed JSON.
 - `api/refresh.py` — fetches odds (featured or deep mode) and writes raw blobs
   to Turso via its libSQL HTTP API. Secret-gated; cron-driven.
+- `api/match.py` — deep extra-markets sweep for a single match by `event_id`,
+  stored as a blob and returned. Secret-gated.
 - `api/latest.py` — reads stored snapshots back from Turso (0 credits).
 - `vercel.json` — daily cron schedule for `/api/refresh`.
 - All functions are Python **stdlib only, zero dependencies** (using `urllib`),

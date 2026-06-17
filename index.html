@@ -32,6 +32,9 @@
   runs daily by cron). Trigger manually with
   <code>/api/refresh?key=YOUR_CRON_SECRET</code>, or a deep extra-markets sweep
   with <code>/api/refresh?mode=deep&amp;key=YOUR_CRON_SECRET</code>.</p>
+  <p class="note">For a single match, sweep all extra markets with
+  <code>/api/match?event_id=MATCH_ID&amp;key=YOUR_CRON_SECRET</code> (get the
+  id from <code>/api/worldcup</code> or <code>/api/latest</code>).</p>
 
   <h3>Query options for <code>/api/worldcup</code></h3>
   <ul>
