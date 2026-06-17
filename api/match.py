@@ -136,6 +136,8 @@ def turso(statements: list):
         raise AppError(502, f"Turso HTTP {e.code}: {detail}")
     except urllib.error.URLError as e:
         raise AppError(502, f"Could not reach Turso: {e.reason}")
+    except ValueError as e:
+        raise AppError(502, f"Invalid JSON from Turso: {e}")
     for r in out.get("results", []):
         if r.get("type") == "error":
             raise AppError(502, f"Turso error: {r.get('error', {}).get('message')}")
@@ -172,20 +174,24 @@ class handler(BaseHTTPRequestHandler):
             regions = qs.get("regions", ["au"])[0]
             markets = qs.get("markets", [DEEP_MARKETS])[0]
 
+            # URL-encode the user-supplied id so it can't manipulate the path.
+            event_id_quoted = urllib.parse.quote(event_id, safe="")
             data, credits = get_json(
-                f"/sports/{WORLD_CUP_KEY}/events/{event_id}/odds",
+                f"/sports/{WORLD_CUP_KEY}/events/{event_id_quoted}/odds",
                 {"regions": regions, "markets": markets,
                  "oddsFormat": "decimal", "dateFormat": "iso"},
             )
+            if not isinstance(data, dict):
+                raise AppError(502, "Unexpected response format from the odds API.")
             store_event(regions, markets, event_id, data, credits)
 
-            books = (data or {}).get("bookmakers") or []
+            books = data.get("bookmakers") or []
             self._send(200, {
                 "ok": True,
                 "event_id": event_id,
-                "home_team": (data or {}).get("home_team"),
-                "away_team": (data or {}).get("away_team"),
-                "commence_time": (data or {}).get("commence_time"),
+                "home_team": data.get("home_team"),
+                "away_team": data.get("away_team"),
+                "commence_time": data.get("commence_time"),
                 "regions": regions,
                 "markets_requested": markets,
                 "bookmakers_returned": [b.get("key") for b in books],
