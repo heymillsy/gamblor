@@ -83,6 +83,8 @@ def sgo_get(path: str, params: dict):
 def _sgo_data(body):
     """SGO wraps results in {"success": true, "data": [...]}; unwrap defensively."""
     if isinstance(body, dict):
+        if body.get("success") is False:
+            raise AppError(502, f"SGO API error: {body.get('error', 'unknown error')}")
         return body.get("data", body)
     return body
 
@@ -166,7 +168,9 @@ def summarise_event(ev, bookmaker):
     """Pull a compact view of one book's markets (incl. player props)."""
     if not isinstance(ev, dict):
         return {"raw": ev}
-    odds = ev.get("odds") or {}
+    odds = ev.get("odds")
+    if not isinstance(odds, (dict, list)):
+        odds = {}
     markets = []
     # SGO v2: odds is a dict keyed by oddID; each has byBookmaker with prices.
     items = odds.items() if isinstance(odds, dict) else enumerate(odds)
@@ -175,7 +179,7 @@ def summarise_event(ev, bookmaker):
             continue
         by_book = odd.get("byBookmaker") or {}
         book = by_book.get(bookmaker) if isinstance(by_book, dict) else None
-        if not book:
+        if not isinstance(book, dict):
             continue
         markets.append({
             "oddID": odd.get("oddID", odd_id),
@@ -223,13 +227,13 @@ class handler(BaseHTTPRequestHandler):
                                            "includeAltLines": "true"})
                 events = _sgo_data(body)
                 if not isinstance(events, list):
-                    events = [events]
+                    events = [events] if events is not None else []
+                events = [e for e in events if isinstance(e, dict)]
                 if not events:
                     raise AppError(404, f"No SGO event for eventID={event_id}.")
                 ev = events[0]
                 turso([(CREATE_TABLE, []),
-                       _insert_stmt(ev.get("leagueID") if isinstance(ev, dict)
-                                    else None, "event", event_id, ev)])
+                       _insert_stmt(ev.get("leagueID"), "event", event_id, ev)])
                 return self._send(200, {"ok": True, "mode": "event",
                                         "objects": 1, "rows_written": 1,
                                         "summary": summarise_event(ev, bookmaker),
@@ -242,7 +246,8 @@ class handler(BaseHTTPRequestHandler):
                                        "includeAltLines": "true"})
             events = _sgo_data(body)
             if not isinstance(events, list):
-                events = [events] if events else []
+                events = [events] if events is not None else []
+            events = [e for e in events if isinstance(e, dict)]
 
             statements = [(CREATE_TABLE, [])]
             for ev in events:
