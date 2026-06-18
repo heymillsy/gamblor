@@ -53,7 +53,7 @@ proxy** so we can discover the exact ids before building storage:
 | `path=` | Purpose |
 | --- | --- |
 | `sports` | reference list (soccer = `sportId` 10) |
-| `fixtures` | schedule (defaults `sportId=10`, `from`=today, `to`=+10d; ≤10-day span). Add `summary=tournaments` for a short list of `{tournamentId, name, count}`, or `tournament=world cup` to filter to just those fixtures. |
+| `fixtures` | schedule (defaults `sportId=10`, `from`=today, `to`=+10d; ≤10-day span). Add `summary=tournaments` for a short list of `{tournamentId, name, count}`; `tournamentId=16` (World Cup) or `tournament=world cup` returns a compact fixture list (`fixtureId`, teams, start). |
 | `odds` | `?fixtureId=…` full prices for one fixture (defaults `oddsFormat=decimal`, `verbosity=3` for props) |
 | `odds-by-tournaments` | `?tournamentIds=…&bookmaker=tab` |
 | `bookmakers` / `markets` | reference lists (find TAB's key / the goalscorer market id) |
