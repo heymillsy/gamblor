@@ -76,7 +76,7 @@ def _apply_defaults(path: str, params: dict) -> dict:
 
 
 def oddspapi_get(path: str, params: dict):
-    """Call OddsPapi and return (data, status, request_url_without_key)."""
+    """Call OddsPapi and return (data, requests_remaining, request_url_without_key)."""
     key = os.environ.get("ODDSPAPI_API_KEY")
     if not key:
         raise AppError(500, "ODDSPAPI_API_KEY is not set in Vercel env vars. "
@@ -104,6 +104,49 @@ def oddspapi_get(path: str, params: dict):
         raise AppError(502, f"Invalid JSON from OddsPapi: {e}")
 
 
+# --- fixtures convenience (client-side narrowing of the big soccer list) ---
+
+def _fixtures_list(data):
+    """Defensively pull the list of fixture dicts out of the response."""
+    if isinstance(data, list):
+        return [f for f in data if isinstance(f, dict)]
+    if isinstance(data, dict):
+        for k in ("fixtures", "data", "results", "items"):
+            v = data.get(k)
+            if isinstance(v, list):
+                return [f for f in v if isinstance(f, dict)]
+    return []
+
+
+def _tournament_summary(fixtures):
+    """Collapse fixtures into distinct tournaments so the World Cup id is easy to spot."""
+    seen = {}
+    for f in fixtures:
+        tid = f.get("tournamentId")
+        key = tid if tid is not None else f.get("tournamentName")
+        row = seen.setdefault(key, {
+            "tournamentId": tid,
+            "tournamentName": f.get("tournamentName"),
+            "categoryName": f.get("categoryName"),
+            "fixtures": 0,
+            "with_odds": 0,
+        })
+        row["fixtures"] += 1
+        if f.get("hasOdds"):
+            row["with_odds"] += 1
+    return sorted(seen.values(),
+                  key=lambda t: (str(t.get("categoryName") or ""),
+                                 str(t.get("tournamentName") or "")))
+
+
+def _filter_tournament(fixtures, substr):
+    """Keep fixtures whose tournament/category text contains substr (case-insensitive)."""
+    s = substr.lower()
+    fields = ("tournamentName", "tournamentSlug", "categoryName", "categorySlug")
+    return [f for f in fixtures
+            if s in " ".join(str(f.get(k, "")) for k in fields).lower()]
+
+
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         # Build the response first, then send once — so a broken pipe during
@@ -117,15 +160,27 @@ class handler(BaseHTTPRequestHandler):
             if path not in ALLOWED_PATHS:
                 raise AppError(422, f"path must be one of {sorted(ALLOWED_PATHS)}.")
 
-            params = _apply_defaults(path, _flatten(qs))
+            flat = _flatten(qs)
+            # local-only conveniences for fixtures; not forwarded upstream
+            summary = flat.pop("summary", None)
+            tournament = flat.pop("tournament", None)
+
+            params = _apply_defaults(path, flat)
             data, remaining, safe_url = oddspapi_get(path, params)
-            response = {
-                "ok": True,
-                "path": path,
-                "request": safe_url,
-                "requests_remaining": remaining,
-                "data": data,
-            }
+
+            response = {"ok": True, "path": path, "request": safe_url,
+                        "requests_remaining": remaining}
+            if path == "fixtures" and (summary or tournament):
+                fixtures = _fixtures_list(data)
+                if tournament:
+                    fixtures = _filter_tournament(fixtures, tournament)
+                if summary == "tournaments":
+                    response["tournaments"] = _tournament_summary(fixtures)
+                else:
+                    response["count"] = len(fixtures)
+                    response["fixtures"] = fixtures
+            else:
+                response["data"] = data
         except AppError as e:
             status, response = e.status, {"ok": False, "error": e.message}
         except Exception as e:
