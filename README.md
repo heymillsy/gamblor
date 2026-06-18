@@ -56,7 +56,7 @@ proxy** so we can discover the exact ids before building storage:
 | `fixtures` | schedule (defaults `sportId=10`, `from`=today, `to`=+10d; ≤10-day span). Add `summary=tournaments` for a short list of `{tournamentId, name, count}`; `tournamentId=16` (World Cup) or `tournament=world cup` returns a compact fixture list (`fixtureId`, teams, start). |
 | `odds` | `?fixtureId=…` full prices for one fixture (defaults `oddsFormat=decimal`, `verbosity=3` for props) |
 | `odds-by-tournaments` | `?tournamentIds=…&bookmaker=tab` |
-| `bookmakers` / `markets` | reference lists (find TAB's key / the goalscorer market id) |
+| `bookmakers` / `markets` | reference lists (find TAB's key / the goalscorer market id). Add `q=tab` to filter the list to matching entries. |
 
 Any extra query params are forwarded to OddsPapi. Requires `ODDSPAPI_API_KEY`.
 No storage yet — spike first, add storage once the shape is confirmed.

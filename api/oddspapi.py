@@ -162,6 +162,21 @@ def _compact_fixtures(fixtures):
     return out
 
 
+def _any_list(data):
+    """Pull the first list out of a response (for filtering reference lists)."""
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        for k in ("bookmakers", "markets", "sports", "data", "results", "items"):
+            v = data.get(k)
+            if isinstance(v, list):
+                return v
+        for v in data.values():
+            if isinstance(v, list):
+                return v
+    return []
+
+
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         # Build the response first, then send once — so a broken pipe during
@@ -176,10 +191,11 @@ class handler(BaseHTTPRequestHandler):
                 raise AppError(422, f"path must be one of {sorted(ALLOWED_PATHS)}.")
 
             flat = _flatten(qs)
-            # local-only conveniences for fixtures; not forwarded upstream
+            # local-only conveniences; not forwarded upstream
             summary = flat.pop("summary", None)
             tournament = flat.pop("tournament", None)
             tournament_id = flat.pop("tournamentId", None)
+            q = flat.pop("q", None)
 
             params = _apply_defaults(path, flat)
             data, remaining, safe_url = oddspapi_get(path, params)
@@ -198,6 +214,12 @@ class handler(BaseHTTPRequestHandler):
                 else:
                     response["count"] = len(fixtures)
                     response["fixtures"] = _compact_fixtures(fixtures)
+            elif q:
+                ql = q.lower()
+                items = [it for it in _any_list(data)
+                         if ql in json.dumps(it, default=str).lower()]
+                response["count"] = len(items)
+                response["results"] = items
             else:
                 response["data"] = data
         except AppError as e:
