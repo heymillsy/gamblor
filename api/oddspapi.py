@@ -162,6 +162,40 @@ def _compact_fixtures(fixtures):
     return out
 
 
+def _extract_market(event, market_id, bookmaker=None):
+    """For a single /odds event, pull one market across bookmakers, resolving
+    player names + prices. Shape: bookmakerOdds[book].markets[id].outcomes[oid]
+    .players[n] -> {playerName, price}."""
+    out = {}
+    books = (event or {}).get("bookmakerOdds")
+    if not isinstance(books, dict):
+        return out
+    mid = str(market_id)
+    for bkey, bval in books.items():
+        if bookmaker and bkey != bookmaker:
+            continue
+        markets = (bval or {}).get("markets")
+        m = markets.get(mid) if isinstance(markets, dict) else None
+        if not isinstance(m, dict):
+            continue
+        selections = []
+        outcomes = m.get("outcomes") or {}
+        for oid, oval in (outcomes.items() if isinstance(outcomes, dict) else []):
+            players = (oval or {}).get("players") or {}
+            for pval in (players.values() if isinstance(players, dict) else []):
+                if not isinstance(pval, dict):
+                    continue
+                selections.append({
+                    "outcomeId": oid,
+                    "playerName": pval.get("playerName"),
+                    "price": pval.get("price"),
+                    "active": pval.get("active"),
+                })
+        if selections:
+            out[bkey] = selections
+    return out
+
+
 def _any_list(data):
     """Pull the first list out of a response (for filtering reference lists)."""
     if isinstance(data, list):
@@ -196,13 +230,17 @@ class handler(BaseHTTPRequestHandler):
             tournament = flat.pop("tournament", None)
             tournament_id = flat.pop("tournamentId", None)
             q = flat.pop("q", None)
+            market_id = flat.pop("marketId", None)
 
             params = _apply_defaults(path, flat)
             data, remaining, safe_url = oddspapi_get(path, params)
 
             response = {"ok": True, "path": path, "request": safe_url,
                         "requests_remaining": remaining}
-            if path == "fixtures" and (summary or tournament or tournament_id):
+            if path == "odds" and market_id:
+                response["marketId"] = market_id
+                response["odds"] = _extract_market(data, market_id)
+            elif path == "fixtures" and (summary or tournament or tournament_id):
                 fixtures = _fixtures_list(data)
                 if tournament_id is not None:
                     fixtures = [f for f in fixtures
