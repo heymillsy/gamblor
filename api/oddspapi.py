@@ -106,6 +106,9 @@ def oddspapi_get(path: str, params: dict):
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
+        # Build the response first, then send once — so a broken pipe during
+        # send can't trigger a second _send (and a secondary exception).
+        status, response = 200, {}
         try:
             qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             self._authorize(qs)
@@ -116,18 +119,22 @@ class handler(BaseHTTPRequestHandler):
 
             params = _apply_defaults(path, _flatten(qs))
             data, remaining, safe_url = oddspapi_get(path, params)
-
-            self._send(200, {
+            response = {
                 "ok": True,
                 "path": path,
                 "request": safe_url,
                 "requests_remaining": remaining,
                 "data": data,
-            })
+            }
         except AppError as e:
-            self._send(e.status, {"ok": False, "error": e.message})
+            status, response = e.status, {"ok": False, "error": e.message}
         except Exception as e:
-            self._send(500, {"ok": False, "error": f"Unexpected: {e}"})
+            status, response = 500, {"ok": False, "error": f"Unexpected: {e}"}
+
+        try:
+            self._send(status, response)
+        except Exception:
+            pass  # client disconnected / broken pipe — nothing more to do
 
     def do_POST(self):
         self.do_GET()
@@ -137,7 +144,7 @@ class handler(BaseHTTPRequestHandler):
         if not secret:
             return  # not configured -> allow (dev); set CRON_SECRET to protect quota
         header = self.headers.get("Authorization", "")
-        provided = header[7:] if header.startswith("Bearer ") else qs.get("key", [""])[0]
+        provided = header[7:] if header.lower().startswith("bearer ") else qs.get("key", [""])[0]
         if not hmac.compare_digest(provided, secret):
             raise AppError(401, "Unauthorized: missing or wrong CRON_SECRET.")
 
