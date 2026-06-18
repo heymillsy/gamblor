@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>gamblor — fixture odds</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: system-ui, sans-serif; max-width: 680px; margin: 1.5rem auto;
+           padding: 0 1rem; line-height: 1.4; }
+    a.back { color: #1463ff; text-decoration: none; font-size: .9rem; }
+    h1 { margin: .3rem 0; font-size: 1.3rem; }
+    .when { color: #888; font-size: .85rem; margin-top: 0; }
+    button { padding: .6rem 1rem; border-radius: .5rem; border: 0; background: #1463ff;
+             color: #fff; font-weight: 600; font-size: .95rem; }
+    #msg { color: #888; font-size: .9rem; }
+    .market { margin: 1.1rem 0; }
+    .market h3 { margin: 0 0 .35rem; font-size: 1rem; }
+    .row { display: flex; justify-content: space-between; gap: 1rem;
+           padding: .3rem .2rem; border-bottom: 1px solid rgba(127,127,127,.15); }
+    .row .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .row .price { font-variant-numeric: tabular-nums; font-weight: 600; }
+    .meta { color: #888; font-size: .8rem; margin-top: 1rem; }
+  </style>
+</head>
+<body>
+  <a class="back" href="/">← Fixtures</a>
+  <h1 id="title">Fixture odds</h1>
+  <p class="when" id="when"></p>
+  <p id="msg">Loading…</p>
+  <div id="actions"></div>
+  <div id="odds"></div>
+
+  <script>
+    const params = new URLSearchParams(location.search);
+    const eventId = params.get('event_id');
+    const msg = document.getElementById('msg');
+    const actions = document.getElementById('actions');
+    const oddsEl = document.getElementById('odds');
+
+    // Friendly names for the market keys we request.
+    const LABELS = {
+      h2h: 'Match result (1X2)', spreads: 'Handicap', totals: 'Over/Under',
+      btts: 'Both teams to score', draw_no_bet: 'Draw no bet',
+      double_chance: 'Double chance',
+      player_goal_scorer_anytime: 'Anytime goal scorer',
+      player_first_goal_scorer: 'First goal scorer',
+      player_last_goal_scorer: 'Last goal scorer',
+      player_shots_on_target: 'Player shots on target',
+      player_assists: 'Player assists',
+    };
+
+    function getKey(force) {
+      let k = localStorage.getItem('gamblor_key') || '';
+      if (force || !k) {
+        k = prompt('Enter your access key (CRON_SECRET):', k) || '';
+        if (k) localStorage.setItem('gamblor_key', k);
+      }
+      return k;
+    }
+
+    function fmt(iso) {
+      if (!iso) return '';
+      const d = new Date(iso);
+      return isNaN(d) ? iso : d.toLocaleString([], {weekday:'short', month:'short',
+                              day:'numeric', hour:'2-digit', minute:'2-digit'});
+    }
+
+    function render(j) {
+      document.getElementById('title').textContent =
+        (j.home_team && j.away_team) ? `${j.home_team} vs ${j.away_team}` : 'Fixture odds';
+      document.getElementById('when').textContent = fmt(j.commence_time);
+      oddsEl.innerHTML = '';
+      const markets = j.markets || [];
+      if (!markets.length) {
+        msg.textContent = 'No DraftKings markets returned for this fixture.';
+        return;
+      }
+      msg.textContent = '';
+      for (const m of markets) {
+        const sec = document.createElement('div');
+        sec.className = 'market';
+        const rows = (m.outcomes || []).map(o => {
+          const label = o.description
+            ? o.description + (o.name && o.name !== 'Yes' ? ' — ' + o.name : '')
+            : o.name + (o.point != null ? ' ' + o.point : '');
+          return `<div class="row"><span class="name">${label}</span>
+                  <span class="price">${o.price}</span></div>`;
+        }).join('');
+        sec.innerHTML = `<h3>${LABELS[m.key] || m.key}</h3>${rows}`;
+        oddsEl.appendChild(sec);
+      }
+      const c = j.credits || {};
+      document.querySelector('.meta')?.remove();
+      const meta = document.createElement('p');
+      meta.className = 'meta';
+      meta.textContent = `Retrieved ${fmt(j.fetched_at)} · ${markets.length} markets`
+        + (c.remaining != null ? ` · ${c.remaining} credits left` : '');
+      oddsEl.appendChild(meta);
+    }
+
+    function showRetrieve() {
+      msg.textContent = 'Odds not retrieved yet for this fixture.';
+      actions.innerHTML = '<button id="get">Retrieve odds (DraftKings)</button>';
+      document.getElementById('get').onclick = retrieve;
+    }
+
+    async function retrieve() {
+      const key = getKey();
+      if (!key) return;
+      msg.textContent = 'Retrieving all DraftKings odds… (uses credits)';
+      actions.innerHTML = '';
+      try {
+        const r = await fetch('/api/fixture_odds?event_id=' + encodeURIComponent(eventId)
+                              + '&key=' + encodeURIComponent(key), {method:'POST'});
+        const j = await r.json();
+        if (!j.ok) throw new Error(j.error || 'failed');
+        render(j);
+      } catch (e) {
+        msg.textContent = 'Error: ' + e.message;
+        showRetrieve();
+      }
+    }
+
+    async function load() {
+      if (!eventId) { msg.textContent = 'Missing event_id.'; return; }
+      try {
+        const r = await fetch('/api/fixture_odds?event_id=' + encodeURIComponent(eventId));
+        const j = await r.json();
+        if (!j.ok) throw new Error(j.error || 'failed');
+        if (j.retrieved) render(j); else showRetrieve();
+      } catch (e) {
+        msg.textContent = 'Error: ' + e.message;
+      }
+    }
+    load();
+  </script>
+</body>
+</html>

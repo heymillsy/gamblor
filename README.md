@@ -32,6 +32,31 @@ manual migration.
 Open these in a browser or call them from any app — they return JSON with
 permissive CORS.
 
+### Web app: fixtures → odds
+
+The site root (`index.html`) lists World Cup **fixtures**; each has a **View Odds**
+button → `odds.html?event_id=…`. On the odds page, if odds haven't been retrieved
+yet, a **Retrieve odds** button pulls *all* DraftKings markets (incl. player
+props) for that fixture and displays them. Backed by:
+
+| Endpoint | What it does | Credit cost |
+| --- | --- | --- |
+| `GET /api/fixtures` | list stored fixtures (+ whether odds retrieved) | 0 |
+| `POST /api/fixtures?key=…` | fetch World Cup fixtures from the-odds-api and store | 0 |
+| `GET /api/fixture_odds?event_id=…` | stored DraftKings odds for one fixture | 0 |
+| `POST /api/fixture_odds?event_id=…&key=…` | retrieve all DraftKings markets for one fixture, store + return | #markets |
+
+Source is fixed to **the-odds-api** + **DraftKings** (`us`). The retrieve call
+requests a broad market list (`h2h, spreads, totals, btts, draw_no_bet,
+double_chance, player_goal_scorer_anytime, player_first/last_goal_scorer,
+player_shots_on_target, player_assists`); if the-odds-api rejects a market key
+(422) it falls back to a safe subset so you always get data. Write actions are
+gated by `CRON_SECRET` (the UI stores it in your browser and sends it).
+
+---
+
+#### Exploratory endpoints
+
 | Endpoint | What you get | Credit cost |
 | --- | --- | --- |
 | `GET /api/worldcup` | Live World Cup odds, TAB only, h2h (moneyline) | ~1 |
