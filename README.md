@@ -19,6 +19,8 @@ serverless endpoints. No local tooling needed — deploy and call the URLs.
      hits draining credits. Vercel automatically sends it on cron runs.
    - `SGO_API_KEY` — *(optional, for player props)* a free SportsGameOdds key
      from sportsgameodds.com; powers `/api/sgo`.
+   - `ODDSPAPI_API_KEY` — *(optional, spike)* a free OddsPapi key from
+     oddspapi.io; powers `/api/oddspapi`.
 4. **Redeploy** so the variables take effect (Vercel → Deployments → ⋯ →
    Redeploy, or just push a commit).
 
@@ -37,7 +39,27 @@ permissive CORS.
 | `GET /api/refresh` | Fetch odds and **store** them in Turso (secret-gated) | 3 (featured) |
 | `GET /api/match` | Deep extra-markets sweep for **one match** by id (secret-gated) | #markets |
 | `GET /api/sgo` | **Player props** via SportsGameOdds (secret-gated) | objects |
+| `GET /api/oddspapi` | **Spike**: explore OddsPapi (player props, free tier) | 1 req each |
 | `GET /api/latest` | Read the latest **stored** snapshot from Turso | 0 |
+
+### OddsPapi spike (`/api/oddspapi`)
+
+the-odds-api has no World Cup props for TAB, and SportsGameOdds gates the World
+Cup (`INTERNATIONAL_SOCCER`) behind a paid plan. OddsPapi's **free tier** (250
+requests/month, query-param `apiKey`) advertises World Cup odds *with player
+props* across 300+ books incl. TAB. This endpoint is a thin **secret-gated
+proxy** so we can discover the exact ids before building storage:
+
+| `path=` | Purpose |
+| --- | --- |
+| `sports` | reference list (soccer = `sportId` 10) |
+| `fixtures` | schedule (defaults `sportId=10`, `dateFrom`=today, `dateTo`=+10d) — find the World Cup `tournamentId` |
+| `odds` | `?fixtureId=…` full prices for one fixture (defaults `oddsFormat=decimal`, `verbosity=3` for props) |
+| `odds-by-tournaments` | `?tournamentIds=…&bookmaker=tab` |
+| `bookmakers` / `markets` | reference lists (find TAB's key / the goalscorer market id) |
+
+Any extra query params are forwarded to OddsPapi. Requires `ODDSPAPI_API_KEY`.
+No storage yet — spike first, add storage once the shape is confirmed.
 
 ### Player props (`/api/sgo` → SportsGameOdds)
 

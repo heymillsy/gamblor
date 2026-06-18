@@ -44,6 +44,15 @@
   (1 object) with <code>/api/sgo?mode=event&amp;event_id=SGO_ID&amp;key=YOUR_CRON_SECRET</code>.
   Requires the <code>SGO_API_KEY</code> env var.</p>
 
+  <h2>OddsPapi spike</h2>
+  <p class="note">Exploratory proxy (free tier, 250 req/mo) to check World Cup
+  player props incl. TAB. Examples:
+  <code>/api/oddspapi?path=sports&amp;key=YOUR_CRON_SECRET</code>,
+  <code>/api/oddspapi?path=fixtures&amp;key=YOUR_CRON_SECRET</code> (find the World
+  Cup tournamentId), then
+  <code>/api/oddspapi?path=odds&amp;fixtureId=ID&amp;bookmakers=tab&amp;key=YOUR_CRON_SECRET</code>.
+  Requires the <code>ODDSPAPI_API_KEY</code> env var.</p>
+
   <h3>Query options for <code>/api/worldcup</code></h3>
   <ul>
     <li><code>regions</code> — default <code>au</code> (Australian books incl. TAB)</li>
