@@ -17,6 +17,8 @@ serverless endpoints. No local tooling needed — deploy and call the URLs.
    - `TURSO_AUTH_TOKEN` — your Turso auth token
    - `CRON_SECRET` — any random string; protects `/api/refresh` from random
      hits draining credits. Vercel automatically sends it on cron runs.
+   - `SGO_API_KEY` — *(optional, for player props)* a free SportsGameOdds key
+     from sportsgameodds.com; powers `/api/sgo`.
 4. **Redeploy** so the variables take effect (Vercel → Deployments → ⋯ →
    Redeploy, or just push a commit).
 
@@ -34,7 +36,25 @@ permissive CORS.
 | `GET /api/sports?soccer=true` | Available soccer competitions | 0 |
 | `GET /api/refresh` | Fetch odds and **store** them in Turso (secret-gated) | 3 (featured) |
 | `GET /api/match` | Deep extra-markets sweep for **one match** by id (secret-gated) | #markets |
+| `GET /api/sgo` | **Player props** via SportsGameOdds (secret-gated) | objects |
 | `GET /api/latest` | Read the latest **stored** snapshot from Turso | 0 |
+
+### Player props (`/api/sgo` → SportsGameOdds)
+
+the-odds-api's soccer player props are limited to US bookmakers — **not** the
+World Cup or TAB. SportsGameOdds covers World Cup player props (anytime
+goalscorer, shots, cards, etc.) and **includes TAB**, on a free Amateur tier
+(~1,000 *objects*/month, billed per event; one match = 1 object). Set
+`SGO_API_KEY` and use:
+
+| Mode | URL | What it does | Cost |
+| --- | --- | --- | --- |
+| discovery | `/api/sgo?mode=leagues&key=…` | list soccer leagues to find the World Cup `leagueID` | cheap |
+| league | `/api/sgo?leagueID=ID&key=…` | all World Cup events + odds (incl. props), one blob row per event | ~1 object/event |
+| event | `/api/sgo?mode=event&event_id=SGO_ID&key=…` | one match, full player-prop detail | 1 object |
+
+SGO event ids differ from the-odds-api ids — get them from the league pull.
+Blobs are stored in a separate `sgo_snapshots` table (auto-created).
 
 ### Storing odds over time (`/api/refresh` → Turso)
 
@@ -95,6 +115,8 @@ quota.
   to Turso via its libSQL HTTP API. Secret-gated; cron-driven.
 - `api/match.py` — deep extra-markets sweep for a single match by `event_id`,
   stored as a blob and returned. Secret-gated.
+- `api/sgo.py` — SportsGameOdds player props (World Cup, incl. TAB); stores raw
+  blobs in `sgo_snapshots`. Secret-gated.
 - `api/latest.py` — reads stored snapshots back from Turso (0 credits).
 - `vercel.json` — daily cron schedule for `/api/refresh`.
 - All functions are Python **stdlib only, zero dependencies** (using `urllib`),
