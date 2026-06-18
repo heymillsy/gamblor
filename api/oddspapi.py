@@ -67,8 +67,8 @@ def _apply_defaults(path: str, params: dict) -> dict:
     params = dict(params)
     if path == "fixtures":
         params.setdefault("sportId", SOCCER_SPORT_ID)
-        params.setdefault("dateFrom", _today(0))
-        params.setdefault("dateTo", _today(10))
+        params.setdefault("from", _today(0))
+        params.setdefault("to", _today(10))
     elif path in ("odds", "odds-by-tournaments", "historical-odds"):
         params.setdefault("oddsFormat", "decimal")
         params.setdefault("verbosity", "3")
