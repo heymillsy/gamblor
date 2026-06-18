@@ -36,6 +36,14 @@
   <code>/api/match?event_id=MATCH_ID&amp;key=YOUR_CRON_SECRET</code> (get the
   id from <code>/api/worldcup</code> or <code>/api/latest</code>).</p>
 
+  <h2>Player props (SportsGameOdds)</h2>
+  <p class="note">the-odds-api has no World Cup player props for TAB, so these
+  come from SportsGameOdds. Discover the league id with
+  <code>/api/sgo?mode=leagues&amp;key=YOUR_CRON_SECRET</code>, pull a league with
+  <code>/api/sgo?leagueID=ID&amp;key=YOUR_CRON_SECRET</code>, or one match
+  (1 object) with <code>/api/sgo?mode=event&amp;event_id=SGO_ID&amp;key=YOUR_CRON_SECRET</code>.
+  Requires the <code>SGO_API_KEY</code> env var.</p>
+
   <h3>Query options for <code>/api/worldcup</code></h3>
   <ul>
     <li><code>regions</code> — default <code>au</code> (Australian books incl. TAB)</li>
