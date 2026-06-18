@@ -147,6 +147,21 @@ def _filter_tournament(fixtures, substr):
             if s in " ".join(str(f.get(k, "")) for k in fields).lower()]
 
 
+def _compact_fixtures(fixtures):
+    """Phone-friendly projection: just the fields needed to pick a fixtureId."""
+    out = []
+    for f in fixtures:
+        out.append({
+            "fixtureId": f.get("fixtureId") or f.get("id"),
+            "tournamentId": f.get("tournamentId"),
+            "startTime": f.get("startTime") or f.get("startDate"),
+            "home": f.get("participant1Name") or f.get("homeName"),
+            "away": f.get("participant2Name") or f.get("awayName"),
+            "hasOdds": f.get("hasOdds"),
+        })
+    return out
+
+
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         # Build the response first, then send once — so a broken pipe during
@@ -164,21 +179,25 @@ class handler(BaseHTTPRequestHandler):
             # local-only conveniences for fixtures; not forwarded upstream
             summary = flat.pop("summary", None)
             tournament = flat.pop("tournament", None)
+            tournament_id = flat.pop("tournamentId", None)
 
             params = _apply_defaults(path, flat)
             data, remaining, safe_url = oddspapi_get(path, params)
 
             response = {"ok": True, "path": path, "request": safe_url,
                         "requests_remaining": remaining}
-            if path == "fixtures" and (summary or tournament):
+            if path == "fixtures" and (summary or tournament or tournament_id):
                 fixtures = _fixtures_list(data)
+                if tournament_id is not None:
+                    fixtures = [f for f in fixtures
+                                if str(f.get("tournamentId")) == str(tournament_id)]
                 if tournament:
                     fixtures = _filter_tournament(fixtures, tournament)
                 if summary == "tournaments":
                     response["tournaments"] = _tournament_summary(fixtures)
                 else:
                     response["count"] = len(fixtures)
-                    response["fixtures"] = fixtures
+                    response["fixtures"] = _compact_fixtures(fixtures)
             else:
                 response["data"] = data
         except AppError as e:
