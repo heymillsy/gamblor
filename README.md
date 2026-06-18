@@ -21,6 +21,8 @@ serverless endpoints. No local tooling needed — deploy and call the URLs.
      from sportsgameodds.com; powers `/api/sgo`.
    - `ODDSPAPI_API_KEY` — *(optional, spike)* a free OddsPapi key from
      oddspapi.io; powers `/api/oddspapi`.
+   - `APIFOOTBALL_KEY` — *(optional, spike)* a free API-Football key from
+     dashboard.api-football.com; powers `/api/apifootball` (exotic markets).
 4. **Redeploy** so the variables take effect (Vercel → Deployments → ⋯ →
    Redeploy, or just push a commit).
 
@@ -85,6 +87,21 @@ proxy** so we can discover the exact ids before building storage:
 
 Any extra query params are forwarded to OddsPapi. Requires `ODDSPAPI_API_KEY`.
 No storage yet — spike first, add storage once the shape is confirmed.
+
+### API-Football spike (`/api/apifootball`)
+
+the-odds-api/DraftKings lacks exotic markets (correct score, winning margin).
+API-Football (free 100 req/day) covers the 2026 World Cup with those markets
+(from its own bookmaker set, pre-match). Secret-gated discovery proxy:
+
+| `path=` | Purpose |
+| --- | --- |
+| `status` | plan + requests used today |
+| `odds/bets` | bet-type catalog (find "Correct Score" / margin markets) |
+| `fixtures` | World Cup fixtures (defaults `league=1`, `season=2026`) |
+| `odds` | `?fixture=ID` pre-match odds (bookmakers + bets) for one fixture |
+
+Requires `APIFOOTBALL_KEY`. Spike only — integrate exotics once confirmed.
 
 ### Player props (`/api/sgo` → SportsGameOdds)
 
