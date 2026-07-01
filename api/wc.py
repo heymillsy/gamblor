@@ -279,7 +279,15 @@ def row_to_fixture(r):
 
 def read_fixtures():
     # CREATE first so a read before the first cron run returns [] cleanly.
-    results = turso([(CREATE_MATCHES, []), (SELECT_MATCHES, [])])
+    try:
+        results = turso([(CREATE_MATCHES, []), (SELECT_MATCHES, [])])
+    except AppError as e:
+        # An older schema (e.g. missing the grp column) yields "no such column".
+        # Treat that like an unpopulated table — the next refresh rebuilds it.
+        msg = (e.message or "").lower()
+        if "no such column" in msg or "no such table" in msg:
+            return {"ok": True, "count": 0, "updated_at": None, "fixtures": []}
+        raise
     rows = results[1] if len(results) > 1 else []
     fixtures = [row_to_fixture(r) for r in rows]
     updated_at = max((r.get("fetched_at") or "" for r in rows), default=None) or None
@@ -321,9 +329,11 @@ def refresh_fixtures():
         raise AppError(502, "Schedule source returned no matches; keeping existing data.")
 
     now_iso = now.isoformat()
-    # Full replace each run so stale rows can't linger; wrapped in a transaction
-    # so a mid-batch failure rolls back instead of leaving the table empty.
-    stmts = [("BEGIN", []), (CREATE_MATCHES, []), ("DELETE FROM wc_matches", [])]
+    # Full replace each run so stale rows can't linger; DROP+CREATE (rather than
+    # DELETE) so the table always matches the current schema even if an older
+    # version created it with different columns. Wrapped in a transaction so a
+    # mid-batch failure rolls back instead of leaving the table empty.
+    stmts = [("BEGIN", []), ("DROP TABLE IF EXISTS wc_matches", []), (CREATE_MATCHES, [])]
     rows = 0
     for i, item in enumerate(matches, start=1):
         if not isinstance(item, dict):
