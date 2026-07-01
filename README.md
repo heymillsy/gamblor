@@ -26,8 +26,9 @@ serverless endpoints. No local tooling needed — deploy and call the URLs.
      from sportsgameodds.com; powers `/api/sgo`.
    - `ODDSPAPI_API_KEY` — *(optional, spike)* a free OddsPapi key from
      oddspapi.io; powers `/api/oddspapi`.
-   - `APIFOOTBALL_KEY` — *(optional, spike)* a free API-Football key from
-     dashboard.api-football.com; powers `/api/apifootball` (exotic markets).
+   - `APIFOOTBALL_KEY` — a free API-Football key from
+     dashboard.api-football.com; powers the home-page fixtures & results
+     (`/api/refresh_wc`, `/api/wc_fixtures`) and the `/api/apifootball` spike.
 4. **Redeploy** so the variables take effect (Vercel → Deployments → ⋯ →
    Redeploy, or just push a commit).
 
@@ -43,32 +44,34 @@ permissive CORS.
 
 The site root (`index.html`) opens on a **sign-in form** (username + password).
 Credentials are checked server-side against `AUTH_USERNAME` / `AUTH_PASSWORD`;
-on success a signed, 7-day token is stored in the browser and the **fixtures**
-list is revealed. Backed by:
+on success a signed, 7-day token is stored in the browser and the **fixtures &
+results** page is revealed. Backed by:
 
 | Endpoint | What it does | Credit cost |
 | --- | --- | --- |
 | `POST /api/login` | check `{username, password}` → signed token | 0 |
 | `GET /api/login?token=…` | verify a token (used on page load) | 0 |
 
-Once signed in, each fixture has a **View Odds**
-button → `odds.html?event_id=…`. On the odds page, if odds haven't been retrieved
-yet, a **Retrieve odds** button pulls *all* DraftKings markets (incl. player
-props) for that fixture and displays them. Backed by:
+Once signed in, the page lists **every** World Cup 2026 match — group stage and
+the full knockout bracket — grouped by round, showing final/live scores for
+matches that have kicked off and kickoff times for those that haven't. Knockout
+fixtures whose teams aren't decided yet show as **TBD**. Backed by:
 
-| Endpoint | What it does | Credit cost |
+| Endpoint | What it does | Cost |
 | --- | --- | --- |
-| `GET /api/fixtures` | list stored fixtures (+ whether odds retrieved) | 0 |
-| `POST /api/fixtures?key=…` | fetch World Cup fixtures from the-odds-api and store | 0 |
-| `GET /api/fixture_odds?event_id=…` | stored DraftKings odds for one fixture | 0 |
-| `POST /api/fixture_odds?event_id=…&key=…` | retrieve all DraftKings markets for one fixture, store + return | #markets |
+| `GET /api/wc_fixtures` | stored fixtures + results (read-only) | 0 |
+| `GET/POST /api/refresh_wc?key=…` | fetch the full WC 2026 schedule + results from API-Football and store | 1 API-Football req |
 
-Source is fixed to **the-odds-api** + **DraftKings** (`us`). The retrieve call
-requests a broad market list (`h2h, spreads, totals, btts, draw_no_bet,
-double_chance, player_goal_scorer_anytime, player_first/last_goal_scorer,
-player_shots_on_target, player_assists`); if the-odds-api rejects a market key
-(422) it falls back to a safe subset so you always get data. Write actions are
-gated by `CRON_SECRET` (the UI stores it in your browser and sends it).
+Fixture data comes from **API-Football** (`league=1`, `season=2026`), which —
+unlike the-odds-api — carries the complete tournament schedule (including
+undetermined knockout fixtures) and match scores. `/api/refresh_wc` runs **daily
+via Vercel Cron** (`vercel.json`) and is gated by `CRON_SECRET`; trigger it
+manually with `?key=YOUR_CRON_SECRET`. It upserts into the `wc_matches` table
+(created automatically). Requires `APIFOOTBALL_KEY`.
+
+> The per-fixture odds view (`odds.html`, `/api/fixtures`, `/api/fixture_odds`)
+> and the-odds-api refresh cron are still available as endpoints but are no
+> longer linked from the home page.
 
 ---
 
