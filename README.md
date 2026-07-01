@@ -17,6 +17,11 @@ serverless endpoints. No local tooling needed — deploy and call the URLs.
    - `TURSO_AUTH_TOKEN` — your Turso auth token
    - `CRON_SECRET` — any random string; protects `/api/refresh` from random
      hits draining credits. Vercel automatically sends it on cron runs.
+   - `AUTH_USERNAME` / `AUTH_PASSWORD` — credentials for the web app login
+     (`index.html`). The landing page shows a sign-in form; the fixtures list
+     appears only after these are entered correctly.
+   - `AUTH_SECRET` — *(optional)* random string used to sign login tokens. If
+     unset, `CRON_SECRET` is reused.
    - `SGO_API_KEY` — *(optional, for player props)* a free SportsGameOdds key
      from sportsgameodds.com; powers `/api/sgo`.
    - `ODDSPAPI_API_KEY` — *(optional, spike)* a free OddsPapi key from
@@ -34,9 +39,19 @@ manual migration.
 Open these in a browser or call them from any app — they return JSON with
 permissive CORS.
 
-### Web app: fixtures → odds
+### Web app: login → fixtures → odds
 
-The site root (`index.html`) lists World Cup **fixtures**; each has a **View Odds**
+The site root (`index.html`) opens on a **sign-in form** (username + password).
+Credentials are checked server-side against `AUTH_USERNAME` / `AUTH_PASSWORD`;
+on success a signed, 7-day token is stored in the browser and the **fixtures**
+list is revealed. Backed by:
+
+| Endpoint | What it does | Credit cost |
+| --- | --- | --- |
+| `POST /api/login` | check `{username, password}` → signed token | 0 |
+| `GET /api/login?token=…` | verify a token (used on page load) | 0 |
+
+Once signed in, each fixture has a **View Odds**
 button → `odds.html?event_id=…`. On the odds page, if odds haven't been retrieved
 yet, a **Retrieve odds** button pulls *all* DraftKings markets (incl. player
 props) for that fixture and displays them. Backed by:
