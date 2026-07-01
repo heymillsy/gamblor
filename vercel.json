@@ -1,8 +1,8 @@
 {
   "crons": [
-    { "path": "/api/refresh_wc", "schedule": "0 6 * * *" }
+    { "path": "/api/wc?job=refresh", "schedule": "0 6 * * *" }
   ],
   "functions": {
-    "api/refresh_wc.py": { "maxDuration": 60 }
+    "api/wc.py": { "maxDuration": 60 }
   }
 }

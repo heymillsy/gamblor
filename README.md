@@ -28,7 +28,7 @@ serverless endpoints. No local tooling needed — deploy and call the URLs.
      oddspapi.io; powers `/api/oddspapi`.
    - `APIFOOTBALL_KEY` — a free API-Football key from
      dashboard.api-football.com; powers the home-page fixtures & results
-     (`/api/refresh_wc`, `/api/wc_fixtures`) and the `/api/apifootball` spike.
+     (`/api/wc`) and the `/api/apifootball` spike.
 4. **Redeploy** so the variables take effect (Vercel → Deployments → ⋯ →
    Redeploy, or just push a commit).
 
@@ -59,15 +59,16 @@ fixtures whose teams aren't decided yet show as **TBD**. Backed by:
 
 | Endpoint | What it does | Cost |
 | --- | --- | --- |
-| `GET /api/wc_fixtures` | stored fixtures + results (read-only) | 0 |
-| `GET/POST /api/refresh_wc?key=…` | fetch the full WC 2026 schedule + results from API-Football and store | 1 API-Football req |
+| `GET /api/wc` | stored fixtures + results (read-only) | 0 |
+| `GET /api/wc?job=refresh&key=…` (or `POST /api/wc?key=…`) | fetch the full WC 2026 schedule + results from API-Football and store | 1 API-Football req |
 
 Fixture data comes from **API-Football** (`league=1`, `season=2026`), which —
 unlike the-odds-api — carries the complete tournament schedule (including
-undetermined knockout fixtures) and match scores. `/api/refresh_wc` runs **daily
-via Vercel Cron** (`vercel.json`) and is gated by `CRON_SECRET`; trigger it
-manually with `?key=YOUR_CRON_SECRET`. It upserts into the `wc_matches` table
-(created automatically). Requires `APIFOOTBALL_KEY`.
+undetermined knockout fixtures) and match scores. The refresh runs **daily via
+Vercel Cron** (`vercel.json` → `GET /api/wc?job=refresh`, gated by
+`CRON_SECRET`; Vercel sends the secret as a Bearer token automatically). Trigger
+it manually with `?job=refresh&key=YOUR_CRON_SECRET`. It upserts into the
+`wc_matches` table (created automatically). Requires `APIFOOTBALL_KEY`.
 
 > The per-fixture odds view (`odds.html`, `/api/fixtures`, `/api/fixture_odds`)
 > and the-odds-api refresh cron are still available as endpoints but are no

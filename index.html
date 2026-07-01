@@ -199,7 +199,7 @@
       msg.textContent = 'Loading fixtures…';
       list.innerHTML = '';
       try {
-        const r = await fetch('/api/wc_fixtures');
+        const r = await fetch('/api/wc');
         const j = await r.json();
         if (!j.ok) throw new Error(j.error || 'failed');
         if (!j.fixtures.length) {

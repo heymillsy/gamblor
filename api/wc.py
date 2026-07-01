@@ -1,18 +1,18 @@
-"""Vercel serverless function: refresh all World Cup 2026 fixtures + results.
+"""Vercel serverless function: World Cup 2026 fixtures + results.
 
-GET/POST /api/refresh_wc
-  Auth: requires CRON_SECRET via `Authorization: Bearer <secret>` (Vercel Cron
-  sends this automatically) or `?key=<secret>` for manual triggering. If
-  CRON_SECRET is unset the endpoint is open (dev only).
+GET  /api/wc                       -> stored fixtures + results (read-only, 0 cost)
+GET  /api/wc?job=refresh&key=…     -> refresh the full schedule + results from
+POST /api/wc?key=…                    API-Football and upsert into Turso (gated)
 
-Pulls the complete FIFA World Cup 2026 schedule from API-Football
-(league=1, season=2026) — every match across the group stage and the knockout
-bracket, including fixtures whose teams are not yet determined (stored as NULL /
-shown as "TBD") and final/live scores for matches that have kicked off. Rows are
-upserted into the Turso `wc_matches` table (created automatically).
+The daily Vercel Cron (vercel.json) hits GET /api/wc?job=refresh; Vercel sends
+CRON_SECRET as a Bearer token automatically. Trigger manually in a browser with
+?job=refresh&key=YOUR_CRON_SECRET.
 
-Costs one API-Football request per run — comfortably within the free tier
-(100 req/day). Stdlib only, no dependencies.
+Fixture data comes from API-Football (league=1, season=2026): the complete
+tournament schedule — group stage and the full knockout bracket — including
+fixtures whose teams aren't decided yet (stored NULL, shown as "TBD") and
+live/final scores. One API-Football request per refresh (free tier: 100/day).
+Stdlib only, no dependencies.
 """
 
 import hmac
@@ -27,6 +27,10 @@ from http.server import BaseHTTPRequestHandler
 BASE_URL = "https://v3.football.api-sports.io"
 WORLD_CUP_LEAGUE = "1"
 SEASON = "2026"
+
+# API-Football status.short codes: match finished / currently in play.
+FINISHED = {"FT", "AET", "PEN"}
+LIVE = {"1H", "HT", "2H", "ET", "BT", "P", "LIVE", "INT"}
 
 CREATE_MATCHES = """
 CREATE TABLE IF NOT EXISTS wc_matches (
@@ -54,6 +58,13 @@ UPSERT_MATCH = (
     " home_team, away_team, home_id, away_id, home_goals, away_goals, "
     " venue_name, venue_city, fetched_at) "
     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+)
+
+SELECT_MATCHES = (
+    "SELECT fixture_id, match_date, timestamp, status_short, status_long, "
+    "round, home_team, away_team, home_goals, away_goals, venue_name, "
+    "venue_city, fetched_at FROM wc_matches "
+    "ORDER BY timestamp IS NULL, timestamp ASC, match_date ASC"
 )
 
 
@@ -114,7 +125,27 @@ def _arg(v):
     return {"type": "text", "value": str(v)}
 
 
+def _cell(cell):
+    if not isinstance(cell, dict):
+        return None
+    t, v = cell.get("type"), cell.get("value")
+    if t == "null":
+        return None
+    if t == "integer":
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return None
+    if t == "float":
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+    return v
+
+
 def turso(statements):
+    """Run [(sql, [args]), ...]; return a list of row-dict lists per statement."""
     token = os.environ.get("TURSO_AUTH_TOKEN")
     if not token:
         raise AppError(500, "TURSO_AUTH_TOKEN is not set in Vercel env vars.")
@@ -135,9 +166,19 @@ def turso(statements):
         raise AppError(502, f"Could not reach Turso: {e.reason}")
     except ValueError as e:
         raise AppError(502, f"Invalid JSON from Turso: {e}")
-    for r in out.get("results", []):
+
+    parsed = []
+    for r in (out.get("results", []) if isinstance(out, dict) else []):
+        if not isinstance(r, dict):
+            parsed.append([])
+            continue
         if r.get("type") == "error":
-            raise AppError(502, f"Turso error: {r.get('error', {}).get('message')}")
+            raise AppError(502, f"Turso error: {(r.get('error') or {}).get('message')}")
+        res = ((r.get("response") or {}).get("result") or {}) if isinstance(r, dict) else {}
+        cols = [c.get("name") for c in res.get("cols", [])]
+        parsed.append([{col: _cell(val) for col, val in zip(cols, raw)}
+                       for raw in res.get("rows", [])])
+    return parsed
 
 
 # --- transform -------------------------------------------------------------
@@ -178,50 +219,96 @@ def match_to_row(item, now):
     ]
 
 
+def row_to_fixture(r):
+    status = r.get("status_short")
+    if status in FINISHED:
+        state = "finished"
+    elif status in LIVE:
+        state = "live"
+    else:
+        state = "upcoming"
+    return {
+        "fixture_id": r.get("fixture_id"),
+        "date": r.get("match_date"),
+        "round": r.get("round"),
+        "status": status,
+        "status_long": r.get("status_long"),
+        "state": state,
+        "home_team": r.get("home_team"),   # may be null -> TBD
+        "away_team": r.get("away_team"),
+        "home_goals": r.get("home_goals"),
+        "away_goals": r.get("away_goals"),
+        "venue": r.get("venue_name"),
+        "city": r.get("venue_city"),
+    }
+
+
+# --- operations ------------------------------------------------------------
+
+def read_fixtures():
+    # CREATE first so a read before the first cron run returns [] cleanly.
+    results = turso([(CREATE_MATCHES, []), (SELECT_MATCHES, [])])
+    rows = results[1] if len(results) > 1 else []
+    fixtures = [row_to_fixture(r) for r in rows]
+    updated_at = max((r.get("fetched_at") or "" for r in rows), default=None) or None
+    return {"ok": True, "count": len(fixtures),
+            "updated_at": updated_at, "fixtures": fixtures}
+
+
+def refresh_fixtures():
+    body = apifootball_get("fixtures", {"league": WORLD_CUP_LEAGUE, "season": SEASON})
+    matches = body.get("response") if isinstance(body, dict) else None
+    if not isinstance(matches, list):
+        matches = []
+    now = datetime.now(timezone.utc).isoformat()
+    stmts = [(CREATE_MATCHES, [])]
+    rows = 0
+    for item in matches:
+        if not isinstance(item, dict):
+            continue
+        args = match_to_row(item, now)
+        if args[0] is None:  # no fixture id -> skip
+            continue
+        stmts.append((UPSERT_MATCH, args))
+        rows += 1
+    turso(stmts)
+    return {"ok": True, "fetched": len(matches), "stored": rows, "updated_at": now}
+
+
 # --- handler ---------------------------------------------------------------
+
+def _is_refresh(qs):
+    job = (qs.get("job", [""])[0] or "").lower()
+    return job in ("refresh", "update", "cron")
+
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
+        status, response, cache = 200, {}, "s-maxage=300, stale-while-revalidate=600"
+        try:
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            if _is_refresh(qs):
+                self._authorize(qs)
+                response, cache = refresh_fixtures(), "no-store"
+            else:
+                response = read_fixtures()
+        except AppError as e:
+            status, response, cache = e.status, {"ok": False, "error": e.message}, "no-store"
+        except Exception as e:
+            status, response, cache = 500, {"ok": False, "error": f"Unexpected: {e}"}, "no-store"
+        self._send(status, response, cache)
+
+    def do_POST(self):
         status, response = 200, {}
         try:
             qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             self._authorize(qs)
-
-            body = apifootball_get(
-                "fixtures",
-                {"league": WORLD_CUP_LEAGUE, "season": SEASON},
-            )
-            matches = body.get("response") if isinstance(body, dict) else None
-            if not isinstance(matches, list):
-                matches = []
-
-            now = datetime.now(timezone.utc).isoformat()
-            stmts = [(CREATE_MATCHES, [])]
-            rows = 0
-            for item in matches:
-                if not isinstance(item, dict):
-                    continue
-                args = match_to_row(item, now)
-                if args[0] is None:  # no fixture id -> skip
-                    continue
-                stmts.append((UPSERT_MATCH, args))
-                rows += 1
-            turso(stmts)
-
-            response = {
-                "ok": True,
-                "fetched": len(matches),
-                "stored": rows,
-                "updated_at": now,
-            }
+            response = refresh_fixtures()
         except AppError as e:
             status, response = e.status, {"ok": False, "error": e.message}
         except Exception as e:
             status, response = 500, {"ok": False, "error": f"Unexpected: {e}"}
-        self._send(status, response)
-
-    def do_POST(self):
-        self.do_GET()
+        self._send(status, response, "no-store")
 
     def _authorize(self, qs):
         secret = os.environ.get("CRON_SECRET")
@@ -229,14 +316,15 @@ class handler(BaseHTTPRequestHandler):
             return
         header = self.headers.get("Authorization", "")
         provided = header[7:] if header.lower().startswith("bearer ") else qs.get("key", [""])[0]
-        if not hmac.compare_digest(provided, secret):
+        if not isinstance(provided, str) or not isinstance(secret, str) \
+                or not hmac.compare_digest(provided, secret):
             raise AppError(401, "Unauthorized: missing or wrong CRON_SECRET.")
 
-    def _send(self, status, obj):
+    def _send(self, status, obj, cache="no-store"):
         body = json.dumps(obj, indent=2).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", cache)
         self.end_headers()
         self.wfile.write(body)
