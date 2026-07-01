@@ -179,34 +179,46 @@
       return `<div class="when">${fmtKickoff(f.date)}</div>`;
     }
 
-    // Custom "Gamblor Round" groupings, keyed by match date (2026). Each round
-    // covers an inclusive date range; `end` is the last day it owns. Round 1's
-    // lower bound is open so the 11 June opener is included, and Round 11's upper
-    // bound is open so nothing past 17 July is dropped — every match gets a home.
+    // Custom "Gamblor Round" groupings, by the match's New Zealand (Auckland)
+    // calendar date. The ranges below are inclusive Auckland dates. All 104
+    // matches fall within them: the 11 Jun (US) opener is 12 Jun in Auckland,
+    // and the 19 Jul (US) final is 20 Jul in Auckland.
     const GAMBLOR_ROUNDS = [
-      { n: 1,  end: '2026-06-14', label: '12–14 Jun' },
-      { n: 2,  end: '2026-06-18', label: '15–18 Jun' },
-      { n: 3,  end: '2026-06-21', label: '19–21 Jun' },
-      { n: 4,  end: '2026-06-25', label: '22–25 Jun' },
-      { n: 5,  end: '2026-06-28', label: '26–28 Jun' },
-      { n: 6,  end: '2026-07-02', label: '29 Jun – 2 Jul' },
-      { n: 7,  end: '2026-07-04', label: '3–4 Jul' },
-      { n: 8,  end: '2026-07-08', label: '5–8 Jul' },
-      { n: 9,  end: '2026-07-12', label: '9–12 Jul' },
-      { n: 10, end: '2026-07-16', label: '13–16 Jul' },
-      { n: 11, end: '2026-07-20', label: '17–20 Jul' },
+      { n: 1,  start: '2026-06-12', end: '2026-06-14', label: '12–14 Jun' },
+      { n: 2,  start: '2026-06-15', end: '2026-06-18', label: '15–18 Jun' },
+      { n: 3,  start: '2026-06-19', end: '2026-06-21', label: '19–21 Jun' },
+      { n: 4,  start: '2026-06-22', end: '2026-06-25', label: '22–25 Jun' },
+      { n: 5,  start: '2026-06-26', end: '2026-06-28', label: '26–28 Jun' },
+      { n: 6,  start: '2026-06-29', end: '2026-07-02', label: '29 Jun – 2 Jul' },
+      { n: 7,  start: '2026-07-03', end: '2026-07-04', label: '3–4 Jul' },
+      { n: 8,  start: '2026-07-05', end: '2026-07-08', label: '5–8 Jul' },
+      { n: 9,  start: '2026-07-09', end: '2026-07-12', label: '9–12 Jul' },
+      { n: 10, start: '2026-07-13', end: '2026-07-16', label: '13–16 Jul' },
+      { n: 11, start: '2026-07-17', end: '2026-07-20', label: '17–20 Jul' },
     ];
 
-    // Map a fixture to its Gamblor Round. Uses the scheduled calendar date (the
-    // YYYY-MM-DD prefix of the kickoff ISO, i.e. the match's own local date) so
-    // browser timezone can't shift a match into an adjacent day/round.
+    // The match's calendar date in Auckland (NZ), as YYYY-MM-DD. Built from the
+    // kickoff instant via Intl so DST is handled and the viewer's own timezone
+    // never shifts a match into an adjacent round.
+    const AKL_PARTS = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Pacific/Auckland', year: 'numeric', month: '2-digit', day: '2-digit' });
+    function aucklandDate(iso) {
+      const d = new Date(iso);
+      if (isNaN(d)) return (iso || '').slice(0, 10);  // fallback: raw date part
+      const p = Object.fromEntries(AKL_PARTS.formatToParts(d).map(x => [x.type, x.value]));
+      return `${p.year}-${p.month}-${p.day}`;
+    }
+
+    // Map a fixture to its Gamblor Round by its Auckland date.
     function gamblorRound(f) {
-      const d = (f.date || '').slice(0, 10);
-      if (!d) return GAMBLOR_ROUNDS[GAMBLOR_ROUNDS.length - 1];
+      const last = GAMBLOR_ROUNDS[GAMBLOR_ROUNDS.length - 1];
+      if (!f.date) return last;
+      const d = aucklandDate(f.date);
       for (const r of GAMBLOR_ROUNDS) {
-        if (d <= r.end) return r;
+        if (d >= r.start && d <= r.end) return r;
       }
-      return GAMBLOR_ROUNDS[GAMBLOR_ROUNDS.length - 1];
+      // Outside every range (shouldn't happen for WC 2026): clamp to first/last.
+      return d < GAMBLOR_ROUNDS[0].start ? GAMBLOR_ROUNDS[0] : last;
     }
 
     function fixtureRow(f) {
