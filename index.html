@@ -25,9 +25,8 @@
     .tile-head { display: flex; align-items: baseline; justify-content: space-between;
                  gap: .5rem; padding: .7rem .1rem .5rem;
                  border-bottom: 2px solid rgba(127,127,127,.22); margin-bottom: .2rem; }
-    .tile-title { font-size: 1.1rem; font-weight: 800; }
+    .tile-title { font-size: 1.1rem; font-weight: 800; margin: 0; }
     .tile-range { color: #888; font-size: .8rem; white-space: nowrap; }
-    .tile-count { color: #888; font-size: .78rem; }
 
     /* Fixture list */
     .fx { display: grid; grid-template-columns: 1fr auto; gap: .2rem .75rem;
@@ -223,7 +222,6 @@
     }
 
     function render(fixtures) {
-      list.innerHTML = '';
       // Bucket fixtures into Gamblor Rounds (input is already sorted by kickoff).
       const buckets = new Map();
       for (const f of fixtures) {
@@ -231,6 +229,8 @@
         if (!buckets.has(r.n)) buckets.set(r.n, { round: r, items: [] });
         buckets.get(r.n).items.push(f);
       }
+      // Build the whole list in a fragment, then insert once (one reflow).
+      const fragment = document.createDocumentFragment();
       for (const n of [...buckets.keys()].sort((a, b) => a - b)) {
         const { round, items } = buckets.get(n);
         const tile = document.createElement('section');
@@ -238,12 +238,14 @@
         const head = document.createElement('div');
         head.className = 'tile-head';
         head.innerHTML =
-          `<span class="tile-title">Gamblor Round ${round.n}</span>
+          `<h2 class="tile-title">Gamblor Round ${round.n}</h2>
            <span class="tile-range">${esc(round.label)} · ${items.length} ${items.length === 1 ? 'match' : 'matches'}</span>`;
         tile.appendChild(head);
         for (const f of items) tile.appendChild(fixtureRow(f));
-        list.appendChild(tile);
+        fragment.appendChild(tile);
       }
+      list.innerHTML = '';
+      list.appendChild(fragment);
     }
 
     async function load() {
