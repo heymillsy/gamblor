@@ -70,6 +70,11 @@ Vercel Cron** (`vercel.json` → `GET /api/wc?job=refresh`, gated by
 it manually with `?job=refresh&key=YOUR_CRON_SECRET`. It upserts into the
 `wc_matches` table (created automatically). Requires `APIFOOTBALL_KEY`.
 
+The refresh makes **one API-Football request per day** (well within the free
+100/day tier) and **auto-stops one week after the final** — it reads the final's
+date from the stored schedule and, once a week past it, returns early without
+calling API-Football, so no further external requests are made.
+
 > The per-fixture odds view (`odds.html`, `/api/fixtures`, `/api/fixture_odds`)
 > and the-odds-api refresh cron are still available as endpoints but are no
 > longer linked from the home page.

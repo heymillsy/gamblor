@@ -21,12 +21,18 @@ import os
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler
 
 BASE_URL = "https://v3.football.api-sports.io"
 WORLD_CUP_LEAGUE = "1"
 SEASON = "2026"
+
+# Stop calling API-Football once we're this many days past the final. The final
+# date is read from the stored schedule (the last-scheduled match); this ISO
+# fallback (2026 final: 2026-07-19) is used only if nothing is stored yet.
+STOP_DAYS_AFTER_FINAL = 7
+FINAL_FALLBACK_ISO = "2026-07-19T19:00:00+00:00"
 
 # API-Football status.short codes: match finished / currently in play.
 FINISHED = {"FT", "AET", "PEN"}
@@ -255,7 +261,34 @@ def read_fixtures():
             "updated_at": updated_at, "fixtures": fixtures}
 
 
+def _final_datetime():
+    """The final's kickoff = latest scheduled match in storage, else fallback."""
+    try:
+        results = turso([(CREATE_MATCHES, []),
+                         ("SELECT MAX(timestamp) AS ts FROM wc_matches", [])])
+        rows = results[1] if len(results) > 1 else []
+        ts = rows[0].get("ts") if rows else None
+        if ts is not None:
+            return datetime.fromtimestamp(int(ts), tz=timezone.utc)
+    except (AppError, ValueError, TypeError, OSError):
+        pass  # fall back to the hard-coded date below
+    return datetime.fromisoformat(FINAL_FALLBACK_ISO)
+
+
 def refresh_fixtures():
+    # Stop hitting API-Football once we're a week past the final.
+    now = datetime.now(timezone.utc)
+    final = _final_datetime()
+    cutoff = final + timedelta(days=STOP_DAYS_AFTER_FINAL)
+    if now > cutoff:
+        return {
+            "ok": True,
+            "skipped": True,
+            "reason": "Tournament over; refresh stopped one week after the final.",
+            "final": final.isoformat(),
+            "cutoff": cutoff.isoformat(),
+        }
+
     body = apifootball_get("fixtures", {"league": WORLD_CUP_LEAGUE, "season": SEASON})
     matches = body.get("response") if isinstance(body, dict) else None
     if not isinstance(matches, list):
