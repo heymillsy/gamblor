@@ -26,7 +26,17 @@
                  gap: .5rem; padding: .7rem .1rem .5rem;
                  border-bottom: 2px solid rgba(127,127,127,.22); margin-bottom: .2rem; }
     .tile-title { font-size: 1.1rem; font-weight: 800; margin: 0; }
+    .tile-heading { flex: 1 1 auto; min-width: 0; }
+    .tile-toggle { display: flex; width: 100%; align-items: center; gap: .4rem; background: none;
+                   border: 0; padding: 0; margin: 0; font: inherit; color: inherit;
+                   cursor: pointer; text-align: left; }
+    .tile-toggle .chev { display: inline-flex; color: #888; transition: transform .15s ease; }
+    .tile.collapsed .tile-toggle .chev { transform: rotate(-90deg); }
+    .tile.collapsed .tile-head { border-bottom-color: transparent; margin-bottom: 0;
+                                 padding-bottom: .35rem; }
+    .tile.collapsed .tile-body { display: none; }
     .tile-range { color: #888; font-size: .8rem; margin-top: .15rem; }
+    .tile-range .done { color: #16a34a; }
     .copy-btn { flex: none; background: transparent; color: #888;
                 border: 1px solid rgba(127,127,127,.35); border-radius: .5rem;
                 padding: .35rem; margin-top: .1rem; cursor: pointer; line-height: 0;
@@ -169,6 +179,10 @@
     const CHECK_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" ' +
       'stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" ' +
       'aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>';
+    // Chevron points down when expanded; CSS rotates it -90° when collapsed.
+    const CHEVRON_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" ' +
+      'stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" ' +
+      'aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>';
 
     // Serialisable match detail for the per-round copy payload.
     function matchDetail(f) {
@@ -331,18 +345,42 @@
       const fragment = document.createDocumentFragment();
       for (const n of [...buckets.keys()].sort((a, b) => a - b)) {
         const { round, items } = buckets.get(n);
+        // A round is "complete" when every match in it has been played; those
+        // start collapsed, all others start expanded.
+        const complete = items.length > 0 && items.every(f => f.state === 'finished');
+        const bodyId = `tile-body-${round.n}`;
+
         const tile = document.createElement('section');
-        tile.className = 'tile';
+        tile.className = 'tile' + (complete ? ' complete collapsed' : '');
+
         const head = document.createElement('div');
         head.className = 'tile-head';
         const heading = document.createElement('div');
+        heading.className = 'tile-heading';
         heading.innerHTML =
-          `<h2 class="tile-title">Gamblor Round ${round.n}</h2>
-           <div class="tile-range">${esc(round.label)} · ${items.length} ${items.length === 1 ? 'match' : 'matches'}</div>`;
+          `<h2 class="tile-title">
+             <button type="button" class="tile-toggle" aria-expanded="${complete ? 'false' : 'true'}" aria-controls="${bodyId}">
+               <span class="chev">${CHEVRON_ICON}</span>
+               <span>Gamblor Round ${round.n}</span>
+             </button>
+           </h2>
+           <div class="tile-range">${esc(round.label)} · ${items.length} ${items.length === 1 ? 'match' : 'matches'}${complete ? ' · <span class="done">✓ complete</span>' : ''}</div>`;
         head.appendChild(heading);
         head.appendChild(makeCopyButton(round, items));
         tile.appendChild(head);
-        for (const f of items) tile.appendChild(fixtureRow(f));
+
+        const body = document.createElement('div');
+        body.className = 'tile-body';
+        body.id = bodyId;
+        for (const f of items) body.appendChild(fixtureRow(f));
+        tile.appendChild(body);
+
+        const toggle = heading.querySelector('.tile-toggle');
+        toggle.addEventListener('click', () => {
+          const collapsed = tile.classList.toggle('collapsed');
+          toggle.setAttribute('aria-expanded', String(!collapsed));
+        });
+
         fragment.appendChild(tile);
       }
       list.innerHTML = '';
