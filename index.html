@@ -26,7 +26,8 @@
                  gap: .5rem; padding: .7rem .1rem .5rem;
                  border-bottom: 2px solid rgba(127,127,127,.22); margin-bottom: .2rem; }
     .tile-title { font-size: 1.1rem; font-weight: 800; margin: 0; }
-    .tile-toggle { display: inline-flex; align-items: center; gap: .4rem; background: none;
+    .tile-heading { flex: 1 1 auto; min-width: 0; }
+    .tile-toggle { display: flex; width: 100%; align-items: center; gap: .4rem; background: none;
                    border: 0; padding: 0; margin: 0; font: inherit; color: inherit;
                    cursor: pointer; text-align: left; }
     .tile-toggle .chev { display: inline-flex; color: #888; transition: transform .15s ease; }
@@ -355,6 +356,7 @@
         const head = document.createElement('div');
         head.className = 'tile-head';
         const heading = document.createElement('div');
+        heading.className = 'tile-heading';
         heading.innerHTML =
           `<h2 class="tile-title">
              <button type="button" class="tile-toggle" aria-expanded="${complete ? 'false' : 'true'}" aria-controls="${bodyId}">
