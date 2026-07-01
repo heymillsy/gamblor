@@ -3,27 +3,38 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>gamblor — World Cup fixtures</title>
+  <title>gamblor — World Cup 2026</title>
   <style>
     :root { color-scheme: light dark; }
     body { font-family: system-ui, sans-serif; max-width: 680px; margin: 1.5rem auto;
            padding: 0 1rem; line-height: 1.4; }
     h1 { margin-bottom: .2rem; }
     .sub { color: #888; margin-top: 0; font-size: .9rem; }
-    .bar { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; margin: 1rem 0; }
+    .bar { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center;
+           justify-content: space-between; margin: 1rem 0; }
     button { padding: .55rem .9rem; border-radius: .5rem; border: 0; background: #1463ff;
              color: #fff; font-weight: 600; font-size: .95rem; cursor: pointer; }
     button.secondary { background: rgba(127,127,127,.2); color: inherit; }
-    .fx { display: flex; align-items: center; justify-content: space-between; gap: .75rem;
-          padding: .7rem .2rem; border-bottom: 1px solid rgba(127,127,127,.2); }
-    .fx .teams { font-weight: 600; }
-    .fx .when { color: #888; font-size: .8rem; }
-    .fx a.btn { padding: .45rem .8rem; border-radius: .5rem; background: #1463ff;
-                color: #fff; text-decoration: none; font-weight: 600; font-size: .85rem;
-                white-space: nowrap; }
-    .tick { color: #16a34a; font-size: .8rem; }
     #msg { color: #888; font-size: .9rem; }
     .hidden { display: none; }
+
+    /* Fixture list */
+    .round-head { margin: 1.4rem 0 .3rem; font-size: 1rem; font-weight: 700;
+                  position: sticky; top: 0; background: Canvas; padding: .3rem 0;
+                  border-bottom: 2px solid rgba(127,127,127,.25); }
+    .fx { display: grid; grid-template-columns: 1fr auto; gap: .2rem .75rem;
+          align-items: center; padding: .6rem .2rem;
+          border-bottom: 1px solid rgba(127,127,127,.18); }
+    .fx .teams { font-weight: 600; }
+    .fx .teams .tbd { color: #999; font-weight: 500; font-style: italic; }
+    .fx .meta { grid-column: 1; color: #888; font-size: .78rem; }
+    .fx .score { font-variant-numeric: tabular-nums; font-weight: 700;
+                 font-size: 1.05rem; text-align: right; white-space: nowrap; }
+    .fx .when { color: #888; font-size: .8rem; text-align: right; white-space: nowrap; }
+    .badge { font-size: .68rem; font-weight: 700; padding: .1rem .4rem; border-radius: .35rem;
+             text-transform: uppercase; letter-spacing: .02em; vertical-align: middle; }
+    .badge.live { background: #dc2626; color: #fff; }
+    .badge.ft { background: rgba(127,127,127,.25); color: inherit; }
 
     /* Login */
     .login { max-width: 320px; margin: 2rem auto; }
@@ -36,8 +47,8 @@
   </style>
 </head>
 <body>
-  <h1>⚽ World Cup fixtures</h1>
-  <p class="sub">DraftKings odds via the-odds-api.</p>
+  <h1>⚽ World Cup 2026</h1>
+  <p class="sub">Every fixture &amp; result — updated daily.</p>
 
   <!-- Login view -->
   <section id="login-view" class="hidden">
@@ -53,14 +64,12 @@
     </form>
   </section>
 
-  <!-- App view (fixtures) -->
+  <!-- App view (fixtures + results) -->
   <section id="app-view" class="hidden">
     <div class="bar">
-      <button id="refresh">Load / refresh fixtures</button>
-      <button id="setkey" class="secondary">Set access key</button>
+      <span id="msg">Loading…</span>
       <button id="logout" class="secondary">Log out</button>
     </div>
-    <p id="msg">Loading…</p>
     <div id="list"></div>
   </section>
 
@@ -133,66 +142,78 @@
       showLogin();
     };
 
-    // --- Fixtures ------------------------------------------------------------
-    function getKey(force) {
-      let k = localStorage.getItem('gamblor_key') || '';
-      if (force || !k) {
-        k = prompt('Enter your access key (CRON_SECRET):', k) || '';
-        if (k) localStorage.setItem('gamblor_key', k);
-      }
-      return k;
+    // --- Fixtures + results --------------------------------------------------
+    function esc(s) {
+      return String(s).replace(/[&<>"']/g, c => (
+        {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     }
 
-    function fmt(iso) {
-      if (!iso) return '';
+    function team(name) {
+      return name ? esc(name) : '<span class="tbd">TBD</span>';
+    }
+
+    function fmtKickoff(iso) {
+      if (!iso) return 'Date TBD';
       const d = new Date(iso);
-      return isNaN(d) ? iso : d.toLocaleString([], {month:'short', day:'numeric',
-                              hour:'2-digit', minute:'2-digit'});
+      return isNaN(d) ? esc(iso) : d.toLocaleString([], {
+        weekday: 'short', month: 'short', day: 'numeric',
+        hour: '2-digit', minute: '2-digit' });
+    }
+
+    function rightCol(f) {
+      if (f.state === 'finished' || f.state === 'live') {
+        const hg = f.home_goals == null ? '–' : f.home_goals;
+        const ag = f.away_goals == null ? '–' : f.away_goals;
+        const badge = f.state === 'live'
+          ? `<span class="badge live">${esc(f.status || 'Live')}</span>`
+          : `<span class="badge ft">FT</span>`;
+        return `<div class="score">${hg}–${ag} ${badge}</div>`;
+      }
+      return `<div class="when">${fmtKickoff(f.date)}</div>`;
+    }
+
+    function render(fixtures) {
+      list.innerHTML = '';
+      let currentRound = null;
+      for (const f of fixtures) {
+        const round = f.round || 'Fixtures';
+        if (round !== currentRound) {
+          currentRound = round;
+          const h = document.createElement('div');
+          h.className = 'round-head';
+          h.textContent = round;
+          list.appendChild(h);
+        }
+        const venue = [f.venue, f.city].filter(Boolean).join(', ');
+        const row = document.createElement('div');
+        row.className = 'fx';
+        row.innerHTML =
+          `<div class="teams">${team(f.home_team)} <span style="color:#888">v</span> ${team(f.away_team)}</div>
+           ${rightCol(f)}
+           ${venue ? `<div class="meta">${esc(venue)}</div>` : ''}`;
+        list.appendChild(row);
+      }
     }
 
     async function load() {
       msg.textContent = 'Loading fixtures…';
       list.innerHTML = '';
       try {
-        const r = await fetch('/api/fixtures');
+        const r = await fetch('/api/wc');
         const j = await r.json();
         if (!j.ok) throw new Error(j.error || 'failed');
         if (!j.fixtures.length) {
-          msg.textContent = 'No fixtures stored yet — tap “Load / refresh fixtures”.';
+          msg.textContent = 'No fixtures stored yet — the daily update will populate them.';
           return;
         }
-        msg.textContent = j.count + ' fixtures';
-        for (const f of j.fixtures) {
-          const row = document.createElement('div');
-          row.className = 'fx';
-          row.innerHTML = `<div>
-              <div class="teams">${f.home_team} vs ${f.away_team}
-                ${f.has_odds ? '<span class="tick">✓ odds</span>' : ''}</div>
-              <div class="when">${fmt(f.commence_time)}</div>
-            </div>
-            <a class="btn" href="/odds.html?event_id=${encodeURIComponent(f.event_id)}">View Odds</a>`;
-          list.appendChild(row);
-        }
+        const upd = j.updated_at ? new Date(j.updated_at) : null;
+        msg.textContent = `${j.count} matches` +
+          (upd && !isNaN(upd) ? ` · updated ${upd.toLocaleString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'})}` : '');
+        render(j.fixtures);
       } catch (e) {
         msg.textContent = 'Error: ' + e.message;
       }
     }
-
-    document.getElementById('refresh').onclick = async () => {
-      const key = getKey();
-      if (!key) return;
-      msg.textContent = 'Fetching fixtures from the-odds-api…';
-      try {
-        const r = await fetch('/api/fixtures?key=' + encodeURIComponent(key), {method:'POST'});
-        const j = await r.json();
-        if (!j.ok) throw new Error(j.error || 'failed');
-        await load();
-      } catch (e) {
-        msg.textContent = 'Error: ' + e.message;
-      }
-    };
-
-    document.getElementById('setkey').onclick = () => getKey(true);
 
     // --- Boot ----------------------------------------------------------------
     (async () => {
