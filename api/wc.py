@@ -194,7 +194,7 @@ def _to_int(v):
 
 def _team(name):
     """Real team, or None for a placeholder (e.g. "W95", "1A") -> shown as TBD."""
-    if not name or any(ch.isdigit() for ch in name):
+    if not isinstance(name, str) or any(ch.isdigit() for ch in name):
         return None
     return name
 
@@ -212,8 +212,9 @@ def parse_kickoff(date_str, time_str):
     m = _TIME_RE.match(str(time_str or "").strip())
     if m:
         hh, mm = int(m.group(1)), int(m.group(2))
-        oh, om = int(m.group(3)), int(m.group(4) or 0)
-        off = timezone(timedelta(hours=oh, minutes=(om if oh >= 0 else -om)))
+        sign = -1 if m.group(3).startswith("-") else 1
+        oh, om = abs(int(m.group(3))), int(m.group(4) or 0)
+        off = timezone(timedelta(minutes=sign * (oh * 60 + om)))
     try:
         dt = datetime(y, mo, d, hh, mm, tzinfo=off)
     except ValueError:
@@ -224,9 +225,10 @@ def parse_kickoff(date_str, time_str):
 def match_to_row(item, index, now):
     """Flatten one openfootball match into UPSERT args (index is the PK)."""
     iso, ts = parse_kickoff(item.get("date"), item.get("time"))
-    ft = (item.get("score") or {}).get("ft") or []
-    hg = ft[0] if len(ft) >= 2 else None
-    ag = ft[1] if len(ft) >= 2 else None
+    score = item.get("score")
+    ft = score.get("ft") if isinstance(score, dict) else None
+    hg = ft[0] if isinstance(ft, list) and len(ft) >= 2 else None
+    ag = ft[1] if isinstance(ft, list) and len(ft) >= 2 else None
     finished = isinstance(hg, int) and isinstance(ag, int)
     return [
         index,
@@ -319,14 +321,16 @@ def refresh_fixtures():
         raise AppError(502, "Schedule source returned no matches; keeping existing data.")
 
     now_iso = now.isoformat()
-    # Full replace each run so stale rows can't linger.
-    stmts = [(CREATE_MATCHES, []), ("DELETE FROM wc_matches", [])]
+    # Full replace each run so stale rows can't linger; wrapped in a transaction
+    # so a mid-batch failure rolls back instead of leaving the table empty.
+    stmts = [("BEGIN", []), (CREATE_MATCHES, []), ("DELETE FROM wc_matches", [])]
     rows = 0
     for i, item in enumerate(matches, start=1):
         if not isinstance(item, dict):
             continue
         stmts.append((UPSERT_MATCH, match_to_row(item, i, now_iso)))
         rows += 1
+    stmts.append(("COMMIT", []))
     turso(stmts)
     return {"ok": True, "fetched": len(matches), "stored": rows, "updated_at": now_iso}
 
