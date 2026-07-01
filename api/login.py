@@ -67,11 +67,13 @@ def verify_token(token, now=None):
         return None
     try:
         payload = json.loads(_b64d(body))
+        if not isinstance(payload, dict):
+            return None
+        if int(payload.get("exp", 0)) < now:
+            return None
+        return payload
     except (ValueError, TypeError):
         return None
-    if int(payload.get("exp", 0)) < now:
-        return None
-    return payload
 
 
 def check_credentials(username, password):
@@ -99,6 +101,8 @@ class handler(BaseHTTPRequestHandler):
                 raise AppError(400, "Body must be a JSON object.")
             username = data.get("username", "")
             password = data.get("password", "")
+            if not isinstance(username, str) or not isinstance(password, str):
+                raise AppError(400, "Username and password must be strings.")
             if not check_credentials(username, password):
                 raise AppError(401, "Invalid username or password.")
             token, exp = make_token(username)

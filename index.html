@@ -88,14 +88,18 @@
       load();
     }
 
+    // Returns true (valid), false (definitively invalid → 401), or
+    // null (network/server error → keep the token, don't force re-login).
     async function tokenIsValid(token) {
       if (!token) return false;
       try {
         const r = await fetch('/api/login?token=' + encodeURIComponent(token));
+        if (r.status === 401) return false;
+        if (!r.ok) return null;
         const j = await r.json();
         return !!j.ok;
       } catch (e) {
-        return false;
+        return null;
       }
     }
 
@@ -192,11 +196,16 @@
 
     // --- Boot ----------------------------------------------------------------
     (async () => {
-      if (await tokenIsValid(getToken())) {
+      const valid = await tokenIsValid(getToken());
+      if (valid === true) {
         showApp();
-      } else {
+      } else if (valid === false) {
         localStorage.removeItem(TOKEN_KEY);
         showLogin();
+      } else {
+        // Network/server error — keep the token and let the user retry.
+        appView.classList.remove('hidden');
+        msg.textContent = 'Connection error. Please refresh to try again.';
       }
     })();
   </script>
