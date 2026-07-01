@@ -1,40 +1,45 @@
 """Vercel serverless function: World Cup 2026 fixtures + results.
 
 GET  /api/wc                       -> stored fixtures + results (read-only, 0 cost)
-GET  /api/wc?job=refresh&key=…     -> refresh the full schedule + results from
-POST /api/wc?key=…                    API-Football and upsert into Turso (gated)
+GET  /api/wc?job=refresh&key=…     -> refresh the full schedule + results and
+POST /api/wc?key=…                    upsert into Turso (gated by CRON_SECRET)
 
 The daily Vercel Cron (vercel.json) hits GET /api/wc?job=refresh; Vercel sends
 CRON_SECRET as a Bearer token automatically. Trigger manually in a browser with
 ?job=refresh&key=YOUR_CRON_SECRET.
 
-Fixture data comes from API-Football (league=1, season=2026): the complete
-tournament schedule — group stage and the full knockout bracket — including
-fixtures whose teams aren't decided yet (stored NULL, shown as "TBD") and
-live/final scores. One API-Football request per refresh (free tier: 100/day).
+Fixture data comes from the openfootball/worldcup.json project (public-domain
+JSON on GitHub, no API key required): the complete 2026 tournament — group stage
+and the full knockout bracket — including fixtures whose teams aren't decided
+yet (winner placeholders like "W95" are stored NULL and shown as "TBD") and
+final scores. The file is auto-generated and refreshed several times a day.
 Stdlib only, no dependencies.
 """
 
 import hmac
 import json
 import os
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler
 
-BASE_URL = "https://v3.football.api-sports.io"
-WORLD_CUP_LEAGUE = "1"
-SEASON = "2026"
+# Public-domain 2026 schedule + results (no key, no quota).
+DATA_URL = ("https://raw.githubusercontent.com/openfootball/worldcup.json/"
+            "master/2026/worldcup.json")
 
-# Stop calling API-Football once we're this many days past the final. The final
-# date is read from the stored schedule (the last-scheduled match); this ISO
-# fallback (2026 final: 2026-07-19) is used only if nothing is stored yet.
+# Stop fetching once we're this many days past the final. The final date is read
+# from the stored schedule (the last-scheduled match); this ISO fallback (2026
+# final: 2026-07-19) is used only if nothing is stored yet.
 STOP_DAYS_AFTER_FINAL = 7
 FINAL_FALLBACK_ISO = "2026-07-19T19:00:00+00:00"
 
-# API-Football status.short codes: match finished / currently in play.
+# "13:00 UTC-6" / "20:00 UTC-4:30" -> hour, minute, offset.
+_TIME_RE = re.compile(r"(\d{1,2}):(\d{2})\s*UTC([+-]\d{1,2})(?::?(\d{2}))?")
+
+# status_short codes that mean a match is finished / currently in play.
 FINISHED = {"FT", "AET", "PEN"}
 LIVE = {"1H", "HT", "2H", "ET", "BT", "P", "LIVE", "INT"}
 
@@ -54,6 +59,7 @@ CREATE TABLE IF NOT EXISTS wc_matches (
   away_goals   INTEGER,
   venue_name   TEXT,
   venue_city   TEXT,
+  grp          TEXT,
   fetched_at   TEXT NOT NULL
 )
 """
@@ -62,14 +68,14 @@ UPSERT_MATCH = (
     "INSERT OR REPLACE INTO wc_matches "
     "(fixture_id, match_date, timestamp, status_short, status_long, round, "
     " home_team, away_team, home_id, away_id, home_goals, away_goals, "
-    " venue_name, venue_city, fetched_at) "
-    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    " venue_name, venue_city, grp, fetched_at) "
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 )
 
 SELECT_MATCHES = (
     "SELECT fixture_id, match_date, timestamp, status_short, status_long, "
     "round, home_team, away_team, home_goals, away_goals, venue_name, "
-    "venue_city, fetched_at FROM wc_matches "
+    "venue_city, grp, fetched_at FROM wc_matches "
     "ORDER BY timestamp IS NULL, timestamp ASC, match_date ASC"
 )
 
@@ -81,32 +87,22 @@ class AppError(Exception):
         self.message = message
 
 
-# --- API-Football ----------------------------------------------------------
+# --- openfootball data source ----------------------------------------------
 
-def apifootball_get(path, params):
-    key = os.environ.get("APIFOOTBALL_KEY")
-    if not key:
-        raise AppError(500, "APIFOOTBALL_KEY is not set in Vercel env vars. "
-                       "Get a free key at dashboard.api-football.com.")
-    url = f"{BASE_URL}/{path}?{urllib.parse.urlencode(params)}"
-    req = urllib.request.Request(
-        url, headers={"x-apisports-key": key, "User-Agent": "gamblor/1.0"})
+def fetch_schedule():
+    """Fetch the openfootball 2026 match list. Returns a list of match dicts."""
+    req = urllib.request.Request(DATA_URL, headers={"User-Agent": "gamblor/1.0"})
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             body = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
-        detail = e.read().decode("utf-8", "replace")[:300]
-        hints = {403: "Forbidden (key/plan?).", 429: "Daily request limit reached.",
-                 499: "Invalid API key."}
-        raise AppError(e.code, f"api-football {e.code}: {hints.get(e.code, '')} {detail}")
+        raise AppError(502, f"openfootball HTTP {e.code} fetching the schedule.")
     except urllib.error.URLError as e:
-        raise AppError(502, f"Could not reach API-Football: {e.reason}")
+        raise AppError(502, f"Could not reach the schedule source: {e.reason}")
     except ValueError as e:
-        raise AppError(502, f"Invalid JSON from API-Football: {e}")
-    errs = body.get("errors") if isinstance(body, dict) else None
-    if errs:
-        raise AppError(502, f"API-Football error: {json.dumps(errs)[:300]}")
-    return body
+        raise AppError(502, f"Invalid JSON from the schedule source: {e}")
+    matches = body.get("matches") if isinstance(body, dict) else None
+    return matches if isinstance(matches, list) else []
 
 
 # --- Turso (libSQL HTTP pipeline) ------------------------------------------
@@ -196,31 +192,60 @@ def _to_int(v):
         return None
 
 
-def match_to_row(item, now):
-    """Flatten one API-Football fixture object into UPSERT args."""
-    fx = item.get("fixture") or {}
-    league = item.get("league") or {}
-    teams = item.get("teams") or {}
-    goals = item.get("goals") or {}
-    home = teams.get("home") or {}
-    away = teams.get("away") or {}
-    status = fx.get("status") or {}
-    venue = fx.get("venue") or {}
+def _team(name):
+    """Real team, or None for a placeholder (e.g. "W95", "1A") -> shown as TBD."""
+    if not isinstance(name, str) or any(ch.isdigit() for ch in name):
+        return None
+    return name
+
+
+def parse_kickoff(date_str, time_str):
+    """openfootball date + "13:00 UTC-6" -> (iso8601, epoch_seconds)."""
+    if not date_str:
+        return None, None
+    try:
+        y, mo, d = (int(x) for x in str(date_str).split("-"))
+    except (ValueError, TypeError):
+        return None, None
+    hh = mm = 0
+    off = timezone.utc
+    m = _TIME_RE.match(str(time_str or "").strip())
+    if m:
+        hh, mm = int(m.group(1)), int(m.group(2))
+        sign = -1 if m.group(3).startswith("-") else 1
+        oh, om = abs(int(m.group(3))), int(m.group(4) or 0)
+        off = timezone(timedelta(minutes=sign * (oh * 60 + om)))
+    try:
+        dt = datetime(y, mo, d, hh, mm, tzinfo=off)
+    except ValueError:
+        return None, None
+    return dt.isoformat(), int(dt.timestamp())
+
+
+def match_to_row(item, index, now):
+    """Flatten one openfootball match into UPSERT args (index is the PK)."""
+    iso, ts = parse_kickoff(item.get("date"), item.get("time"))
+    score = item.get("score")
+    ft = score.get("ft") if isinstance(score, dict) else None
+    hg = ft[0] if isinstance(ft, list) and len(ft) >= 2 else None
+    ag = ft[1] if isinstance(ft, list) and len(ft) >= 2 else None
+    finished = isinstance(hg, int) and isinstance(ag, int)
     return [
-        _to_int(fx.get("id")),
-        fx.get("date"),
-        _to_int(fx.get("timestamp")),
-        status.get("short"),
-        status.get("long"),
-        league.get("round"),
-        home.get("name"),
-        away.get("name"),
-        _to_int(home.get("id")),
-        _to_int(away.get("id")),
-        _to_int(goals.get("home")),
-        _to_int(goals.get("away")),
-        venue.get("name"),
-        venue.get("city"),
+        index,
+        iso or item.get("date"),
+        ts,
+        "FT" if finished else "NS",
+        "Match Finished" if finished else "Not Started",
+        item.get("round"),
+        _team(item.get("team1")),
+        _team(item.get("team2")),
+        None,  # home_id (unavailable)
+        None,  # away_id (unavailable)
+        hg if finished else None,
+        ag if finished else None,
+        None,  # venue_name (openfootball's "ground" is a city -> venue_city)
+        item.get("ground"),
+        item.get("group"),
         now,
     ]
 
@@ -237,6 +262,7 @@ def row_to_fixture(r):
         "fixture_id": r.get("fixture_id"),
         "date": r.get("match_date"),
         "round": r.get("round"),
+        "group": r.get("grp"),
         "status": status,
         "status_long": r.get("status_long"),
         "state": state,
@@ -276,7 +302,7 @@ def _final_datetime():
 
 
 def refresh_fixtures():
-    # Stop hitting API-Football once we're a week past the final.
+    # Stop fetching once we're a week past the final.
     now = datetime.now(timezone.utc)
     final = _final_datetime()
     cutoff = final + timedelta(days=STOP_DAYS_AFTER_FINAL)
@@ -289,23 +315,24 @@ def refresh_fixtures():
             "cutoff": cutoff.isoformat(),
         }
 
-    body = apifootball_get("fixtures", {"league": WORLD_CUP_LEAGUE, "season": SEASON})
-    matches = body.get("response") if isinstance(body, dict) else None
-    if not isinstance(matches, list):
-        matches = []
-    now = datetime.now(timezone.utc).isoformat()
-    stmts = [(CREATE_MATCHES, [])]
+    matches = fetch_schedule()
+    if not matches:
+        # Don't wipe good data if the source returns an empty/unexpected payload.
+        raise AppError(502, "Schedule source returned no matches; keeping existing data.")
+
+    now_iso = now.isoformat()
+    # Full replace each run so stale rows can't linger; wrapped in a transaction
+    # so a mid-batch failure rolls back instead of leaving the table empty.
+    stmts = [("BEGIN", []), (CREATE_MATCHES, []), ("DELETE FROM wc_matches", [])]
     rows = 0
-    for item in matches:
+    for i, item in enumerate(matches, start=1):
         if not isinstance(item, dict):
             continue
-        args = match_to_row(item, now)
-        if args[0] is None:  # no fixture id -> skip
-            continue
-        stmts.append((UPSERT_MATCH, args))
+        stmts.append((UPSERT_MATCH, match_to_row(item, i, now_iso)))
         rows += 1
+    stmts.append(("COMMIT", []))
     turso(stmts)
-    return {"ok": True, "fetched": len(matches), "stored": rows, "updated_at": now}
+    return {"ok": True, "fetched": len(matches), "stored": rows, "updated_at": now_iso}
 
 
 # --- handler ---------------------------------------------------------------

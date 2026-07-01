@@ -26,9 +26,9 @@ serverless endpoints. No local tooling needed — deploy and call the URLs.
      from sportsgameodds.com; powers `/api/sgo`.
    - `ODDSPAPI_API_KEY` — *(optional, spike)* a free OddsPapi key from
      oddspapi.io; powers `/api/oddspapi`.
-   - `APIFOOTBALL_KEY` — a free API-Football key from
-     dashboard.api-football.com; powers the home-page fixtures & results
-     (`/api/wc`) and the `/api/apifootball` spike.
+   - `APIFOOTBALL_KEY` — *(optional, spike)* a free API-Football key from
+     dashboard.api-football.com; powers the `/api/apifootball` spike only. The
+     home-page fixtures & results (`/api/wc`) need **no** API key.
 4. **Redeploy** so the variables take effect (Vercel → Deployments → ⋯ →
    Redeploy, or just push a commit).
 
@@ -60,20 +60,23 @@ fixtures whose teams aren't decided yet show as **TBD**. Backed by:
 | Endpoint | What it does | Cost |
 | --- | --- | --- |
 | `GET /api/wc` | stored fixtures + results (read-only) | 0 |
-| `GET /api/wc?job=refresh&key=…` (or `POST /api/wc?key=…`) | fetch the full WC 2026 schedule + results from API-Football and store | 1 API-Football req |
+| `GET /api/wc?job=refresh&key=…` (or `POST /api/wc?key=…`) | fetch the full WC 2026 schedule + results and store | 0 (no key) |
 
-Fixture data comes from **API-Football** (`league=1`, `season=2026`), which —
-unlike the-odds-api — carries the complete tournament schedule (including
-undetermined knockout fixtures) and match scores. The refresh runs **daily via
-Vercel Cron** (`vercel.json` → `GET /api/wc?job=refresh`, gated by
-`CRON_SECRET`; Vercel sends the secret as a Bearer token automatically). Trigger
-it manually with `?job=refresh&key=YOUR_CRON_SECRET`. It upserts into the
-`wc_matches` table (created automatically). Requires `APIFOOTBALL_KEY`.
+Fixture data comes from the public-domain
+[openfootball/worldcup.json](https://github.com/openfootball/worldcup.json)
+project — a JSON file on GitHub carrying the complete 2026 tournament (group
+stage plus the full knockout bracket) with final scores. It is auto-generated
+and refreshed several times a day, and **needs no API key or account**. Winner
+placeholders for undecided knockout ties (e.g. `W95`) are stored as `NULL` and
+shown as **TBD**. The refresh runs **daily via Vercel Cron** (`vercel.json` →
+`GET /api/wc?job=refresh`, gated by `CRON_SECRET`; Vercel sends the secret as a
+Bearer token automatically). Trigger it manually with
+`?job=refresh&key=YOUR_CRON_SECRET`. It does a full replace of the `wc_matches`
+table (created automatically) each run.
 
-The refresh makes **one API-Football request per day** (well within the free
-100/day tier) and **auto-stops one week after the final** — it reads the final's
-date from the stored schedule and, once a week past it, returns early without
-calling API-Football, so no further external requests are made.
+The refresh **auto-stops one week after the final** — it reads the final's date
+from the stored schedule and, once a week past it, returns early without
+fetching. There is no external API key, quota, or credit cost.
 
 > The per-fixture odds view (`odds.html`, `/api/fixtures`, `/api/fixture_odds`)
 > and the-odds-api refresh cron are still available as endpoints but are no

@@ -184,13 +184,13 @@
           h.textContent = round;
           list.appendChild(h);
         }
-        const venue = [f.venue, f.city].filter(Boolean).join(', ');
+        const meta = [f.group, f.venue, f.city].filter(Boolean).join(' · ');
         const row = document.createElement('div');
         row.className = 'fx';
         row.innerHTML =
           `<div class="teams">${team(f.home_team)} <span style="color:#888">v</span> ${team(f.away_team)}</div>
            ${rightCol(f)}
-           ${venue ? `<div class="meta">${esc(venue)}</div>` : ''}`;
+           ${meta ? `<div class="meta">${esc(meta)}</div>` : ''}`;
         list.appendChild(row);
       }
     }
