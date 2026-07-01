@@ -22,11 +22,17 @@
     .tile { border: 1px solid rgba(127,127,127,.28); border-radius: .8rem;
             padding: 0 .9rem .6rem; margin: 1.1rem 0;
             background: rgba(127,127,127,.04); }
-    .tile-head { display: flex; align-items: baseline; justify-content: space-between;
+    .tile-head { display: flex; align-items: flex-start; justify-content: space-between;
                  gap: .5rem; padding: .7rem .1rem .5rem;
                  border-bottom: 2px solid rgba(127,127,127,.22); margin-bottom: .2rem; }
     .tile-title { font-size: 1.1rem; font-weight: 800; margin: 0; }
-    .tile-range { color: #888; font-size: .8rem; white-space: nowrap; }
+    .tile-range { color: #888; font-size: .8rem; margin-top: .15rem; }
+    .copy-btn { flex: none; background: transparent; color: #888;
+                border: 1px solid rgba(127,127,127,.35); border-radius: .5rem;
+                padding: .35rem; margin-top: .1rem; cursor: pointer; line-height: 0;
+                display: inline-flex; align-items: center; justify-content: center; }
+    .copy-btn:hover { color: inherit; background: rgba(127,127,127,.12); }
+    .copy-btn.copied { color: #16a34a; border-color: #16a34a; }
 
     /* Fixture list */
     .fx { display: grid; grid-template-columns: 1fr auto; gap: .2rem .75rem;
@@ -155,6 +161,86 @@
         {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     }
 
+    // Icon-only copy button assets (inline SVG, inherit text colour).
+    const COPY_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" ' +
+      'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ' +
+      'aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/>' +
+      '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+    const CHECK_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" ' +
+      'stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" ' +
+      'aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>';
+
+    // Serialisable match detail for the per-round copy payload.
+    function matchDetail(f) {
+      return {
+        date: f.date,
+        round: f.round,
+        group: f.group,
+        home_team: f.home_team,
+        away_team: f.away_team,
+        state: f.state,
+        status: f.status,
+        home_goals: f.home_goals,
+        away_goals: f.away_goals,
+        venue: f.venue,
+        city: f.city,
+      };
+    }
+
+    function roundPayload(round, items) {
+      return {
+        gamblor_round: round.n,
+        dates: round.label,
+        match_count: items.length,
+        matches: items.map(matchDetail),
+      };
+    }
+
+    function flashCopied(btn, ok) {
+      if (!ok) { btn.title = 'Copy failed'; return; }
+      btn.classList.add('copied');
+      btn.innerHTML = CHECK_ICON;
+      setTimeout(() => { btn.classList.remove('copied'); btn.innerHTML = COPY_ICON; }, 1200);
+    }
+
+    function writeClipboard(text) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        return navigator.clipboard.writeText(text).then(() => true, () => legacyCopy(text));
+      }
+      return Promise.resolve(legacyCopy(text));
+    }
+
+    function legacyCopy(text) {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'absolute';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        const ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        return ok;
+      } catch (e) {
+        return false;
+      }
+    }
+
+    function makeCopyButton(round, items) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'copy-btn';
+      btn.title = `Copy Gamblor Round ${round.n} matches as JSON`;
+      btn.setAttribute('aria-label', btn.title);
+      btn.innerHTML = COPY_ICON;
+      btn.addEventListener('click', () => {
+        const text = JSON.stringify(roundPayload(round, items), null, 2);
+        writeClipboard(text).then(ok => flashCopied(btn, ok));
+      });
+      return btn;
+    }
+
     function team(name) {
       return name ? esc(name) : '<span class="tbd">TBD</span>';
     }
@@ -249,9 +335,12 @@
         tile.className = 'tile';
         const head = document.createElement('div');
         head.className = 'tile-head';
-        head.innerHTML =
+        const heading = document.createElement('div');
+        heading.innerHTML =
           `<h2 class="tile-title">Gamblor Round ${round.n}</h2>
-           <span class="tile-range">${esc(round.label)} · ${items.length} ${items.length === 1 ? 'match' : 'matches'}</span>`;
+           <div class="tile-range">${esc(round.label)} · ${items.length} ${items.length === 1 ? 'match' : 'matches'}</div>`;
+        head.appendChild(heading);
+        head.appendChild(makeCopyButton(round, items));
         tile.appendChild(head);
         for (const f of items) tile.appendChild(fixtureRow(f));
         fragment.appendChild(tile);
