@@ -18,10 +18,18 @@
     #msg { color: #888; font-size: .9rem; }
     .hidden { display: none; }
 
+    /* Gamblor Round tiles */
+    .tile { border: 1px solid rgba(127,127,127,.28); border-radius: .8rem;
+            padding: 0 .9rem .6rem; margin: 1.1rem 0;
+            background: rgba(127,127,127,.04); }
+    .tile-head { display: flex; align-items: baseline; justify-content: space-between;
+                 gap: .5rem; padding: .7rem .1rem .5rem;
+                 border-bottom: 2px solid rgba(127,127,127,.22); margin-bottom: .2rem; }
+    .tile-title { font-size: 1.1rem; font-weight: 800; }
+    .tile-range { color: #888; font-size: .8rem; white-space: nowrap; }
+    .tile-count { color: #888; font-size: .78rem; }
+
     /* Fixture list */
-    .round-head { margin: 1.4rem 0 .3rem; font-size: 1rem; font-weight: 700;
-                  position: sticky; top: 0; background: Canvas; padding: .3rem 0;
-                  border-bottom: 2px solid rgba(127,127,127,.25); }
     .fx { display: grid; grid-template-columns: 1fr auto; gap: .2rem .75rem;
           align-items: center; padding: .6rem .2rem;
           border-bottom: 1px solid rgba(127,127,127,.18); }
@@ -172,26 +180,69 @@
       return `<div class="when">${fmtKickoff(f.date)}</div>`;
     }
 
+    // Custom "Gamblor Round" groupings, keyed by match date (2026). Each round
+    // covers an inclusive date range; `end` is the last day it owns. Round 1's
+    // lower bound is open so the 11 June opener is included, and Round 11's upper
+    // bound is open so nothing past 17 July is dropped — every match gets a home.
+    const GAMBLOR_ROUNDS = [
+      { n: 1,  end: '2026-06-14', label: '12–14 Jun' },
+      { n: 2,  end: '2026-06-18', label: '15–18 Jun' },
+      { n: 3,  end: '2026-06-21', label: '19–21 Jun' },
+      { n: 4,  end: '2026-06-25', label: '22–25 Jun' },
+      { n: 5,  end: '2026-06-28', label: '26–28 Jun' },
+      { n: 6,  end: '2026-07-02', label: '29 Jun – 2 Jul' },
+      { n: 7,  end: '2026-07-04', label: '3–4 Jul' },
+      { n: 8,  end: '2026-07-08', label: '5–8 Jul' },
+      { n: 9,  end: '2026-07-12', label: '9–12 Jul' },
+      { n: 10, end: '2026-07-16', label: '13–16 Jul' },
+      { n: 11, end: '2026-07-20', label: '17–20 Jul' },
+    ];
+
+    // Map a fixture to its Gamblor Round. Uses the scheduled calendar date (the
+    // YYYY-MM-DD prefix of the kickoff ISO, i.e. the match's own local date) so
+    // browser timezone can't shift a match into an adjacent day/round.
+    function gamblorRound(f) {
+      const d = (f.date || '').slice(0, 10);
+      if (!d) return GAMBLOR_ROUNDS[GAMBLOR_ROUNDS.length - 1];
+      for (const r of GAMBLOR_ROUNDS) {
+        if (d <= r.end) return r;
+      }
+      return GAMBLOR_ROUNDS[GAMBLOR_ROUNDS.length - 1];
+    }
+
+    function fixtureRow(f) {
+      // Keep the original groupings (matchday/knockout round + group) in the meta.
+      const meta = [f.round, f.group, f.venue, f.city].filter(Boolean).join(' · ');
+      const row = document.createElement('div');
+      row.className = 'fx';
+      row.innerHTML =
+        `<div class="teams">${team(f.home_team)} <span style="color:#888">v</span> ${team(f.away_team)}</div>
+         ${rightCol(f)}
+         ${meta ? `<div class="meta">${esc(meta)}</div>` : ''}`;
+      return row;
+    }
+
     function render(fixtures) {
       list.innerHTML = '';
-      let currentRound = null;
+      // Bucket fixtures into Gamblor Rounds (input is already sorted by kickoff).
+      const buckets = new Map();
       for (const f of fixtures) {
-        const round = f.round || 'Fixtures';
-        if (round !== currentRound) {
-          currentRound = round;
-          const h = document.createElement('div');
-          h.className = 'round-head';
-          h.textContent = round;
-          list.appendChild(h);
-        }
-        const meta = [f.group, f.venue, f.city].filter(Boolean).join(' · ');
-        const row = document.createElement('div');
-        row.className = 'fx';
-        row.innerHTML =
-          `<div class="teams">${team(f.home_team)} <span style="color:#888">v</span> ${team(f.away_team)}</div>
-           ${rightCol(f)}
-           ${meta ? `<div class="meta">${esc(meta)}</div>` : ''}`;
-        list.appendChild(row);
+        const r = gamblorRound(f);
+        if (!buckets.has(r.n)) buckets.set(r.n, { round: r, items: [] });
+        buckets.get(r.n).items.push(f);
+      }
+      for (const n of [...buckets.keys()].sort((a, b) => a - b)) {
+        const { round, items } = buckets.get(n);
+        const tile = document.createElement('section');
+        tile.className = 'tile';
+        const head = document.createElement('div');
+        head.className = 'tile-head';
+        head.innerHTML =
+          `<span class="tile-title">Gamblor Round ${round.n}</span>
+           <span class="tile-range">${esc(round.label)} · ${items.length} ${items.length === 1 ? 'match' : 'matches'}</span>`;
+        tile.appendChild(head);
+        for (const f of items) tile.appendChild(fixtureRow(f));
+        list.appendChild(tile);
       }
     }
 
