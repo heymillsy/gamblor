@@ -12,7 +12,7 @@
     .sub { color: #888; margin-top: 0; font-size: .9rem; }
     .bar { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; margin: 1rem 0; }
     button { padding: .55rem .9rem; border-radius: .5rem; border: 0; background: #1463ff;
-             color: #fff; font-weight: 600; font-size: .95rem; }
+             color: #fff; font-weight: 600; font-size: .95rem; cursor: pointer; }
     button.secondary { background: rgba(127,127,127,.2); color: inherit; }
     .fx { display: flex; align-items: center; justify-content: space-between; gap: .75rem;
           padding: .7rem .2rem; border-bottom: 1px solid rgba(127,127,127,.2); }
@@ -23,23 +23,113 @@
                 white-space: nowrap; }
     .tick { color: #16a34a; font-size: .8rem; }
     #msg { color: #888; font-size: .9rem; }
+    .hidden { display: none; }
+
+    /* Login */
+    .login { max-width: 320px; margin: 2rem auto; }
+    .login label { display: block; font-size: .85rem; font-weight: 600; margin: .8rem 0 .3rem; }
+    .login input { width: 100%; box-sizing: border-box; padding: .6rem .7rem; font-size: 1rem;
+                   border: 1px solid rgba(127,127,127,.45); border-radius: .5rem;
+                   background: transparent; color: inherit; }
+    .login button { width: 100%; margin-top: 1.2rem; padding: .7rem; }
+    #login-error { color: #dc2626; font-size: .85rem; min-height: 1.2em; margin-top: .6rem; }
   </style>
 </head>
 <body>
   <h1>⚽ World Cup fixtures</h1>
   <p class="sub">DraftKings odds via the-odds-api.</p>
 
-  <div class="bar">
-    <button id="refresh">Load / refresh fixtures</button>
-    <button id="setkey" class="secondary">Set access key</button>
-  </div>
-  <p id="msg">Loading…</p>
-  <div id="list"></div>
+  <!-- Login view -->
+  <section id="login-view" class="hidden">
+    <form class="login" id="login-form">
+      <label for="username">Username</label>
+      <input id="username" name="username" type="text" autocomplete="username"
+             autocapitalize="none" autofocus required />
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password"
+             autocomplete="current-password" required />
+      <button type="submit" id="login-btn">Sign in</button>
+      <p id="login-error"></p>
+    </form>
+  </section>
+
+  <!-- App view (fixtures) -->
+  <section id="app-view" class="hidden">
+    <div class="bar">
+      <button id="refresh">Load / refresh fixtures</button>
+      <button id="setkey" class="secondary">Set access key</button>
+      <button id="logout" class="secondary">Log out</button>
+    </div>
+    <p id="msg">Loading…</p>
+    <div id="list"></div>
+  </section>
 
   <script>
+    const TOKEN_KEY = 'gamblor_token';
+    const loginView = document.getElementById('login-view');
+    const appView = document.getElementById('app-view');
+    const loginForm = document.getElementById('login-form');
+    const loginError = document.getElementById('login-error');
+    const loginBtn = document.getElementById('login-btn');
     const msg = document.getElementById('msg');
     const list = document.getElementById('list');
 
+    function getToken() { return localStorage.getItem(TOKEN_KEY) || ''; }
+
+    function showLogin() {
+      appView.classList.add('hidden');
+      loginView.classList.remove('hidden');
+      document.getElementById('username').focus();
+    }
+
+    function showApp() {
+      loginView.classList.add('hidden');
+      appView.classList.remove('hidden');
+      load();
+    }
+
+    async function tokenIsValid(token) {
+      if (!token) return false;
+      try {
+        const r = await fetch('/api/login?token=' + encodeURIComponent(token));
+        const j = await r.json();
+        return !!j.ok;
+      } catch (e) {
+        return false;
+      }
+    }
+
+    // --- Login ---------------------------------------------------------------
+    loginForm.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      loginError.textContent = '';
+      loginBtn.disabled = true;
+      const username = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value;
+      try {
+        const r = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password }),
+        });
+        const j = await r.json();
+        if (!j.ok) throw new Error(j.error || 'Login failed');
+        localStorage.setItem(TOKEN_KEY, j.token);
+        loginForm.reset();
+        showApp();
+      } catch (e) {
+        loginError.textContent = e.message;
+      } finally {
+        loginBtn.disabled = false;
+      }
+    });
+
+    document.getElementById('logout').onclick = () => {
+      localStorage.removeItem(TOKEN_KEY);
+      showLogin();
+    };
+
+    // --- Fixtures ------------------------------------------------------------
     function getKey(force) {
       let k = localStorage.getItem('gamblor_key') || '';
       if (force || !k) {
@@ -99,7 +189,16 @@
     };
 
     document.getElementById('setkey').onclick = () => getKey(true);
-    load();
+
+    // --- Boot ----------------------------------------------------------------
+    (async () => {
+      if (await tokenIsValid(getToken())) {
+        showApp();
+      } else {
+        localStorage.removeItem(TOKEN_KEY);
+        showLogin();
+      }
+    })();
   </script>
 </body>
 </html>
