@@ -870,18 +870,41 @@ balanced objective:
       return map;
     }
 
-    // `forceRefresh` sends `cache: 'no-store'` so an explicit refresh (the button,
-    // or a reload after saving odds) bypasses the CDN cache and fetches the
-    // freshest data. The initial page load leaves it false to use the normal
-    // cache (`s-maxage=300`) and avoid needless serverless/database load.
-    async function load(forceRefresh = false) {
-      msg.textContent = 'Loading fixtures…';
+    // Trigger a live upstream re-fetch (openfootball -> Turso) via POST /api/wc,
+    // authorised by the login token. Returns the server's JSON summary; throws on
+    // any auth/network/source failure so the caller can surface it.
+    async function refreshFromSource() {
+      const r = await fetch('/api/wc', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + getToken() },
+        cache: 'no-store',
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) throw new Error(j.error || `refresh failed (HTTP ${r.status})`);
+      return j;
+    }
+
+    // `forceRefresh` sends `cache: 'no-store'` so a reload bypasses the CDN cache
+    // and reads the freshest stored data (the initial page load leaves it false to
+    // use the normal `s-maxage=300` cache). `fetchLatest` additionally does a live
+    // upstream pull first, so the Refresh button gets brand-new source data — not
+    // just whatever the daily cron last stored. Fixtures still show "TBD" while the
+    // source itself hasn't decided those teams yet (knockout placeholders).
+    async function load(forceRefresh = false, fetchLatest = false) {
+      msg.textContent = fetchLatest ? 'Fetching latest fixtures…' : 'Loading fixtures…';
       list.innerHTML = '';
       refreshBtn.disabled = true;
+      // An upstream pull failure is non-fatal: we still show the stored fixtures
+      // and just note the problem, rather than blanking the list.
+      let warning = '';
       try {
-        const opts = forceRefresh ? { cache: 'no-store' } : undefined;
+        if (fetchLatest) {
+          try { await refreshFromSource(); }
+          catch (e) { warning = ` · refresh failed: ${e.message}`; }
+        }
+        const opts = (forceRefresh || fetchLatest) ? { cache: 'no-store' } : undefined;
         const [r, odds] = await Promise.all([
-          fetch('/api/wc', opts), loadOdds(forceRefresh)]);
+          fetch('/api/wc', opts), loadOdds(forceRefresh || fetchLatest)]);
         oddsByKey = odds;
         const j = await r.json();
         if (!j.ok) throw new Error(j.error || 'failed');
@@ -891,7 +914,8 @@ balanced objective:
         }
         const upd = j.updated_at ? new Date(j.updated_at) : null;
         msg.textContent = `${j.count} matches` +
-          (upd && !isNaN(upd) ? ` · updated ${upd.toLocaleString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'})}` : '');
+          (upd && !isNaN(upd) ? ` · updated ${upd.toLocaleString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'})}` : '') +
+          warning;
         render(j.fixtures);
       } catch (e) {
         msg.textContent = 'Error: ' + e.message;
@@ -900,7 +924,8 @@ balanced objective:
       }
     }
 
-    refreshBtn.addEventListener('click', () => load(true));
+    // The Refresh button pulls fresh data from the source, then re-renders.
+    refreshBtn.addEventListener('click', () => load(true, true));
 
     // --- Tabs ----------------------------------------------------------------
     // Each tab: its button, its panel, and the name used to select it.

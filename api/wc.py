@@ -16,10 +16,13 @@ final scores. The file is auto-generated and refreshed several times a day.
 Stdlib only, no dependencies.
 """
 
+import base64
+import hashlib
 import hmac
 import json
 import os
 import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -85,6 +88,47 @@ class AppError(Exception):
         super().__init__(message)
         self.status = status
         self.message = message
+
+
+# --- login-token auth (mirrors api/login.py) -------------------------------
+# Lets a signed-in user trigger an on-demand upstream refresh with their login
+# token, in addition to the CRON_SECRET the daily cron uses.
+
+def _auth_secret():
+    """Signing key for tokens. Dedicated AUTH_SECRET, else reuse CRON_SECRET."""
+    secret = os.environ.get("AUTH_SECRET") or os.environ.get("CRON_SECRET")
+    if not secret:
+        raise AppError(500, "AUTH_SECRET (or CRON_SECRET) is not set in Vercel env vars.")
+    return secret.encode("utf-8")
+
+
+def _b64d(s):
+    pad = "=" * (-len(s) % 4)
+    return base64.urlsafe_b64decode(s + pad)
+
+
+def _b64e(raw):
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+
+def verify_token(token, now=None):
+    """Return the token payload dict if valid, else None. Never raises."""
+    now = int(now if now is not None else time.time())
+    try:
+        body, sig = token.split(".", 1)
+        expected = _b64e(hmac.new(_auth_secret(), body.encode("ascii"), hashlib.sha256).digest())
+        if not isinstance(sig, str) or not isinstance(expected, str):
+            return None
+        if not hmac.compare_digest(sig, expected):
+            return None
+        payload = json.loads(_b64d(body))
+        if not isinstance(payload, dict):
+            return None
+        if int(payload.get("exp", 0)) < now:
+            return None
+        return payload
+    except (ValueError, TypeError, AttributeError, AppError):
+        return None
 
 
 # --- openfootball data source ----------------------------------------------
@@ -381,14 +425,19 @@ class handler(BaseHTTPRequestHandler):
         self._send(status, response, "no-store")
 
     def _authorize(self, qs):
+        header = self.headers.get("Authorization", "")
+        provided = header[7:] if header.lower().startswith("bearer ") else qs.get("key", [""])[0]
+        # A valid app login token (from /api/login) authorizes an on-demand
+        # refresh — this is how the "Refresh" button triggers an upstream pull.
+        if isinstance(provided, str) and verify_token(provided):
+            return
+        # Otherwise fall back to the CRON_SECRET used by the daily cron (sent as a
+        # Bearer token by Vercel) or a manual ?key=... trigger.
         secret = os.environ.get("CRON_SECRET")
         if not secret:
             return
-        header = self.headers.get("Authorization", "")
-        provided = header[7:] if header.lower().startswith("bearer ") else qs.get("key", [""])[0]
-        if not isinstance(provided, str) or not isinstance(secret, str) \
-                or not hmac.compare_digest(provided, secret):
-            raise AppError(401, "Unauthorized: missing or wrong CRON_SECRET.")
+        if not isinstance(provided, str) or not hmac.compare_digest(provided, secret):
+            raise AppError(401, "Unauthorized: missing or wrong credentials.")
 
     def _send(self, status, obj, cache="no-store"):
         body = json.dumps(obj, indent=2).encode("utf-8")
