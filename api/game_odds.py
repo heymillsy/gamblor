@@ -21,7 +21,9 @@ Expected POST body shape (one scraped round):
                                   "selections": [ { "selection": "...", "odds": "1.33" } ] } ] } ] }
 
 Each match's markets may sit directly on the match ("markets") or nested under a
-scraper "odds" wrapper ("odds": { "markets": [...] }); both are accepted.
+scraper "odds" wrapper ("odds": { "markets": [...] }); both are accepted. "source"
+and "scraped_at" may likewise be nested per-match under that "odds" wrapper, and
+fall back to the top-level body values when absent.
 
 Stdlib only, no dependencies.
 """
@@ -236,6 +238,14 @@ def _markets_of(obj):
     return markets if isinstance(markets, list) else []
 
 
+def _odds_meta(match):
+    """(source, scraped_at) from a match's nested "odds" wrapper, else (None, None)."""
+    odds = match.get("odds") if isinstance(match, dict) else None
+    if isinstance(odds, dict):
+        return odds.get("source"), odds.get("scraped_at")
+    return None, None
+
+
 # --- operations ------------------------------------------------------------
 
 def save_odds(body):
@@ -254,8 +264,9 @@ def save_odds(body):
     if gamblor_round is None:
         raise AppError(422, "Body must contain an integer \"gamblor_round\".")
 
-    source = body.get("source")
-    scraped_at = body.get("scraped_at")
+    # Round-level fallbacks; the scraper nests these per-match under "odds".
+    body_source = body.get("source")
+    body_scraped_at = body.get("scraped_at")
     now_iso = datetime.now(timezone.utc).isoformat()
 
     stmts = [(CREATE_GAME_ODDS, [])]
@@ -269,6 +280,9 @@ def save_odds(body):
             continue
         key = match_key(gamblor_round, home, away)
         markets = _markets_of(m)
+        m_source, m_scraped_at = _odds_meta(m)
+        source = m_source if m_source is not None else body_source
+        scraped_at = m_scraped_at if m_scraped_at is not None else body_scraped_at
         stmts.append((UPSERT_GAME_ODDS, [
             key, gamblor_round, m.get("match"), m.get("date"),
             source, scraped_at, len(markets),
