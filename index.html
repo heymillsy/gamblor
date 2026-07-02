@@ -879,7 +879,7 @@ balanced objective:
         headers: { 'Authorization': 'Bearer ' + getToken() },
         cache: 'no-store',
       });
-      const j = await r.json().catch(() => ({}));
+      const j = (await r.json().catch(() => ({}))) || {};
       if (!r.ok || !j.ok) throw new Error(j.error || `refresh failed (HTTP ${r.status})`);
       return j;
     }
