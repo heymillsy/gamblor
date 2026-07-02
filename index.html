@@ -89,6 +89,16 @@
     #odds-status.ok { color: #16a34a; }
     #odds-status.err { color: #dc2626; }
 
+    /* Chrome Scraper tab */
+    .scraper { margin-top: .8rem; }
+    .scraper-head { display: flex; align-items: flex-start; justify-content: space-between;
+                    gap: .5rem; }
+    .scraper-head .sub { margin: .2rem 0; }
+    #scraper-md { white-space: pre-wrap; word-break: break-word; overflow: auto; max-height: 60vh;
+                  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .8rem;
+                  padding: .7rem .8rem; border: 1px solid rgba(127,127,127,.45); border-radius: .5rem;
+                  background: rgba(127,127,127,.06); }
+
     /* View Odds link on a fixture row (lands in the empty row-2 / col-2 cell) */
     .fx .odds-cell { grid-column: 2; justify-self: end; }
     a.view-odds { display: inline-block; font-size: .72rem; font-weight: 700; text-decoration: none;
@@ -120,6 +130,7 @@
     <div class="tabs" role="tablist">
       <button id="tab-games" class="tab active" role="tab" aria-selected="true">Games</button>
       <button id="tab-odds" class="tab" role="tab" aria-selected="false">Odds Input</button>
+      <button id="tab-scraper" class="tab" role="tab" aria-selected="false">Chrome Scraper</button>
       <button id="logout" class="secondary tab-logout">Log out</button>
     </div>
 
@@ -145,6 +156,111 @@
         <button id="odds-save" type="button">Save odds</button>
       </div>
     </section>
+
+    <!-- Chrome Scraper tab -->
+    <section id="scraper-tab" class="hidden" role="tabpanel">
+      <div class="scraper">
+        <div class="scraper-head">
+          <p class="sub">The TAB.co.nz odds scraper prompt. Copy it and paste it
+            into your Chrome scraping agent.</p>
+          <button id="scraper-copy" class="dl-btn" type="button"
+                  title="Copy prompt to clipboard" aria-label="Copy prompt to clipboard"></button>
+        </div>
+        <pre id="scraper-md"># TAB.co.nz Odds Scraper Prompt
+
+You are scraping football (soccer) betting odds from the open tab.co.nz tab. The output feeds an automated upload, so the JSON format must match the schema below exactly.
+
+## Goal
+
+For each match in the INPUT list, open its match page on tab.co.nz and capture **every market and every selection with its odds**. Return one JSON object with the same shape as INPUT, where each match object is preserved verbatim and a new `odds` object is appended to it.
+
+## Navigation method (do this for every match)
+
+1. From the tab.co.nz page, click into the match to open its full markets page. Do not rely on the odds shown on the match-list overview; the full market set only appears on the match page.
+2. TAB groups markets under category tabs/filters (for example: Popular, Match, Goals, Goalscorers, Halves, Corners, Player, Specials). Visit every category so no markets are skipped.
+3. Within each category, markets are shown as accordion panels. Many are collapsed by default. **Expand every collapsed panel** before reading it, otherwise its selections will be missing.
+4. Some markets have a "Show more" / "See all" control (common on Anytime Goalscorer, Correct Score, Shots markets). Click it so all selections are visible before capturing.
+5. Read every visible market and selection. Only after you have expanded and captured a page fully do you move to the next match.
+
+## Output schema
+
+Return a single JSON object. Keep the top-level `gamblor_round`, `dates`, `match_count`, and `matches` exactly as given in INPUT. For each match, copy every existing field unchanged and add an `odds` object:
+
+```json
+{
+  "gamblor_round": 7,
+  "dates": "3–4 Jul",
+  "match_count": 6,
+  "matches": [
+    {
+      "date": "2026-07-02T12:00:00-07:00",
+      "round": "Round of 32",
+      "group": null,
+      "home_team": "Spain",
+      "away_team": "Austria",
+      "state": "upcoming",
+      "status": "NS",
+      "home_goals": null,
+      "away_goals": null,
+      "venue": null,
+      "city": "Los Angeles (Inglewood)",
+      "odds": {
+        "source": "tab.co.nz",
+        "scraped_at": "2026-07-02T00:50:02.433Z",
+        "market_count": 236,
+        "markets": [
+          {
+            "market": "Match Result",
+            "selections": [
+              { "selection": "Spain", "odds": "1.33" },
+              { "selection": "Draw", "odds": "5.00" },
+              { "selection": "Austria", "odds": "9.00" }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
+```
+
+### Field rules
+
+- `source`: always the string `"tab.co.nz"`.
+- `scraped_at`: a single ISO 8601 UTC timestamp with milliseconds and a `Z` suffix, generated once at the start of the run and reused for every match (for example `"2026-07-02T00:50:02.433Z"`).
+- `market_count`: the integer length of that match's `markets` array. It must equal the actual number of market objects you output. Count them, do not estimate.
+- `market`: the market's display name copied verbatim, including team names and lines (for example `"First Half Handicap Spain -1.0 Goal"`, `"Colombia Total Corners 5.5"`). Do not rename, shorten, or clean up.
+- `selection`: the selection label copied verbatim (for example `"Over 2.5"`, `"Spain 5-4"`, `"Mikel Oyarzabal OR Lamine Yamal First Goalscorer"`).
+- `odds`: the odds copied verbatim **as a string**, exactly as displayed. Most are two decimals (`"5.60"`). Longshots display as whole numbers and stay that way (`"101"`, `"226"`); do not add `.00`. Never convert to a number.
+
+## Critical rules
+
+- **Capture everything. Do not deduplicate.** TAB repeats some markets across category tabs (for example "Correct Score" and "Anytime Goalscorer" often appear more than once). Keep every instance you see. A correct scrape of these games has roughly 210 to 240 markets each.
+- **Never invent, guess, or fill in odds.** If a selection has no price shown, omit that selection. If a market shows a price for only one side, include just the side that has a price (single-selection markets are valid).
+- Preserve the order markets appear on the page.
+- Do not translate, reformat, or "tidy" any text. Verbatim only.
+- Output valid JSON only in the final deliverable: no comments, no trailing commas, correct escaping of quotes inside strings.
+
+## Process and delivery
+
+Work through the matches one at a time in the INPUT order. This keeps the browser session stable across the large market volume.
+
+1. Open match 1, expand and capture all markets, then output that single completed match object as a JSON code block labelled with the match (for example `Spain vs Austria`). Include its `market_count`.
+2. Repeat for each remaining match, outputting one code block per match as you finish it. Emitting each game as you go means nothing is lost if the session is interrupted.
+3. After the last match, output the complete assembled JSON object (all matches inside the full top-level structure) as the final deliverable.
+
+Before delivering each match block, self-check: does `market_count` equal the number of market objects, are all `odds` values strings, and did you keep duplicate markets rather than merging them?
+
+## INPUT
+
+Paste this round's match list here (the same structure you already use):
+
+```json
+PASTE_MATCHES_JSON_HERE
+```
+</pre>
+      </div>
+    </section>
   </section>
 
   <script>
@@ -160,8 +276,12 @@
     // Tabs + Odds Input
     const tabGames = document.getElementById('tab-games');
     const tabOdds = document.getElementById('tab-odds');
+    const tabScraper = document.getElementById('tab-scraper');
     const gamesTab = document.getElementById('games-tab');
     const oddsTab = document.getElementById('odds-input-tab');
+    const scraperTab = document.getElementById('scraper-tab');
+    const scraperMd = document.getElementById('scraper-md');
+    const scraperCopy = document.getElementById('scraper-copy');
     const oddsFile = document.getElementById('odds-file');
     const oddsText = document.getElementById('odds-text');
     const oddsSave = document.getElementById('odds-save');
@@ -247,6 +367,10 @@
     const CHEVRON_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" ' +
       'stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" ' +
       'aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>';
+    const COPY_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" ' +
+      'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ' +
+      'aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>' +
+      '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
 
     // Serialisable match detail for the per-round export payload. Includes the
     // game's saved odds (all markets) when odds have been added for it.
@@ -513,17 +637,67 @@
     }
 
     // --- Tabs ----------------------------------------------------------------
+    // Each tab: its button, its panel, and the name used to select it.
+    const TABS = [
+      { name: 'games',   btn: tabGames,   panel: gamesTab },
+      { name: 'odds',    btn: tabOdds,    panel: oddsTab },
+      { name: 'scraper', btn: tabScraper, panel: scraperTab },
+    ];
     function switchTab(which) {
-      const games = which === 'games';
-      tabGames.classList.toggle('active', games);
-      tabOdds.classList.toggle('active', !games);
-      tabGames.setAttribute('aria-selected', String(games));
-      tabOdds.setAttribute('aria-selected', String(!games));
-      gamesTab.classList.toggle('hidden', !games);
-      oddsTab.classList.toggle('hidden', games);
+      for (const t of TABS) {
+        const on = t.name === which;
+        t.btn.classList.toggle('active', on);
+        t.btn.setAttribute('aria-selected', String(on));
+        t.panel.classList.toggle('hidden', !on);
+      }
     }
-    tabGames.addEventListener('click', () => switchTab('games'));
-    tabOdds.addEventListener('click', () => switchTab('odds'));
+    for (const t of TABS) t.btn.addEventListener('click', () => switchTab(t.name));
+
+    // --- Chrome Scraper: copy prompt to clipboard ----------------------------
+    scraperCopy.innerHTML = COPY_ICON;
+
+    function flashCopied(btn) {
+      if (btn._timeout) clearTimeout(btn._timeout);
+      btn.classList.add('copied');
+      btn.innerHTML = CHECK_ICON;
+      btn._timeout = setTimeout(() => {
+        btn.classList.remove('copied');
+        btn.innerHTML = COPY_ICON;
+        btn._timeout = null;
+      }, 1200);
+    }
+
+    // Fallback for when the async Clipboard API is unavailable (older browsers,
+    // non-secure contexts): copy via a temporary textarea + execCommand.
+    function legacyCopy(text) {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.top = '0';
+      ta.style.left = '-9999px';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      let ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+      ta.remove();
+      return ok;
+    }
+
+    scraperCopy.addEventListener('click', async () => {
+      const text = scraperMd.textContent;
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(text);
+          flashCopied(scraperCopy);
+          return;
+        }
+      } catch (e) {
+        // Fall through to the legacy copy path on failure.
+      }
+      if (legacyCopy(text)) flashCopied(scraperCopy);
+    });
 
     // --- Odds Input ----------------------------------------------------------
     function setOddsStatus(text, kind) {
