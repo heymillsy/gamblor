@@ -657,9 +657,14 @@ PASTE_MATCHES_JSON_HERE
     scraperCopy.innerHTML = COPY_ICON;
 
     function flashCopied(btn) {
+      if (btn._timeout) clearTimeout(btn._timeout);
       btn.classList.add('copied');
       btn.innerHTML = CHECK_ICON;
-      setTimeout(() => { btn.classList.remove('copied'); btn.innerHTML = COPY_ICON; }, 1200);
+      btn._timeout = setTimeout(() => {
+        btn.classList.remove('copied');
+        btn.innerHTML = COPY_ICON;
+        btn._timeout = null;
+      }, 1200);
     }
 
     // Fallback for when the async Clipboard API is unavailable (older browsers,
@@ -669,6 +674,8 @@ PASTE_MATCHES_JSON_HERE
       ta.value = text;
       ta.setAttribute('readonly', '');
       ta.style.position = 'fixed';
+      ta.style.top = '0';
+      ta.style.left = '-9999px';
       ta.style.opacity = '0';
       document.body.appendChild(ta);
       ta.select();
@@ -683,13 +690,13 @@ PASTE_MATCHES_JSON_HERE
       try {
         if (navigator.clipboard && navigator.clipboard.writeText) {
           await navigator.clipboard.writeText(text);
-        } else if (!legacyCopy(text)) {
-          throw new Error('copy unavailable');
+          flashCopied(scraperCopy);
+          return;
         }
-        flashCopied(scraperCopy);
       } catch (e) {
-        if (legacyCopy(text)) flashCopied(scraperCopy);
+        // Fall through to the legacy copy path on failure.
       }
+      if (legacyCopy(text)) flashCopied(scraperCopy);
     });
 
     // --- Odds Input ----------------------------------------------------------
