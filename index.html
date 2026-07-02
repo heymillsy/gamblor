@@ -37,12 +37,12 @@
     .tile.collapsed .tile-body { display: none; }
     .tile-range { color: #888; font-size: .8rem; margin-top: .15rem; }
     .tile-range .done { color: #16a34a; }
-    .copy-btn { flex: none; background: transparent; color: #888;
-                border: 1px solid rgba(127,127,127,.35); border-radius: .5rem;
-                padding: .35rem; margin-top: .1rem; cursor: pointer; line-height: 0;
-                display: inline-flex; align-items: center; justify-content: center; }
-    .copy-btn:hover { color: inherit; background: rgba(127,127,127,.12); }
-    .copy-btn.copied { color: #16a34a; border-color: #16a34a; }
+    .dl-btn { flex: none; background: transparent; color: #888;
+              border: 1px solid rgba(127,127,127,.35); border-radius: .5rem;
+              padding: .35rem; margin-top: .1rem; cursor: pointer; line-height: 0;
+              display: inline-flex; align-items: center; justify-content: center; }
+    .dl-btn:hover { color: inherit; background: rgba(127,127,127,.12); }
+    .dl-btn.copied { color: #16a34a; border-color: #16a34a; }
 
     /* Fixture list */
     .fx { display: grid; grid-template-columns: 1fr auto; gap: .2rem .75rem;
@@ -167,8 +167,8 @@
     const oddsSave = document.getElementById('odds-save');
     const oddsStatus = document.getElementById('odds-status');
 
-    // Match keys (round + normalised team pair) that have saved odds.
-    let oddsKeys = new Set();
+    // Saved odds, keyed by "<round>|<home> vs <away>" -> { markets, source, ... }.
+    let oddsByKey = new Map();
 
     function getToken() { return localStorage.getItem(TOKEN_KEY) || ''; }
 
@@ -235,11 +235,11 @@
         {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     }
 
-    // Icon-only copy button assets (inline SVG, inherit text colour).
-    const COPY_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" ' +
+    // Icon-only download button assets (inline SVG, inherit text colour).
+    const DOWNLOAD_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" ' +
       'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ' +
-      'aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/>' +
-      '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+      'aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>' +
+      '<polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
     const CHECK_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" ' +
       'stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" ' +
       'aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>';
@@ -248,9 +248,10 @@
       'stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" ' +
       'aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>';
 
-    // Serialisable match detail for the per-round copy payload.
+    // Serialisable match detail for the per-round export payload. Includes the
+    // game's saved odds (all markets) when odds have been added for it.
     function matchDetail(f) {
-      return {
+      const detail = {
         date: f.date,
         round: f.round,
         group: f.group,
@@ -263,6 +264,17 @@
         venue: f.venue,
         city: f.city,
       };
+      const key = matchedOddsKey(f);
+      if (key) {
+        const o = oddsByKey.get(key);
+        detail.odds = {
+          source: o.source,
+          scraped_at: o.scraped_at,
+          market_count: o.market_count,
+          markets: o.markets || [],
+        };
+      }
+      return detail;
     }
 
     function roundPayload(round, items) {
@@ -274,47 +286,35 @@
       };
     }
 
-    function flashCopied(btn, ok) {
-      if (!ok) { btn.title = 'Copy failed'; return; }
+    function flashDownloaded(btn) {
       btn.classList.add('copied');
       btn.innerHTML = CHECK_ICON;
-      setTimeout(() => { btn.classList.remove('copied'); btn.innerHTML = COPY_ICON; }, 1200);
+      setTimeout(() => { btn.classList.remove('copied'); btn.innerHTML = DOWNLOAD_ICON; }, 1200);
     }
 
-    function writeClipboard(text) {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        return navigator.clipboard.writeText(text).then(() => true, () => legacyCopy(text));
-      }
-      return Promise.resolve(legacyCopy(text));
+    function downloadJSON(filename, text) {
+      const blob = new Blob([text], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
     }
 
-    function legacyCopy(text) {
-      try {
-        const ta = document.createElement('textarea');
-        ta.value = text;
-        ta.setAttribute('readonly', '');
-        ta.style.position = 'absolute';
-        ta.style.left = '-9999px';
-        document.body.appendChild(ta);
-        ta.select();
-        const ok = document.execCommand('copy');
-        document.body.removeChild(ta);
-        return ok;
-      } catch (e) {
-        return false;
-      }
-    }
-
-    function makeCopyButton(round, items) {
+    function makeDownloadButton(round, items) {
       const btn = document.createElement('button');
       btn.type = 'button';
-      btn.className = 'copy-btn';
-      btn.title = `Copy Gamblor Round ${round.n} matches as JSON`;
+      btn.className = 'dl-btn';
+      btn.title = `Download Gamblor Round ${round.n} games (with odds) as JSON`;
       btn.setAttribute('aria-label', btn.title);
-      btn.innerHTML = COPY_ICON;
+      btn.innerHTML = DOWNLOAD_ICON;
       btn.addEventListener('click', () => {
         const text = JSON.stringify(roundPayload(round, items), null, 2);
-        writeClipboard(text).then(ok => flashCopied(btn, ok));
+        downloadJSON(`gamblor-round-${round.n}.json`, text);
+        flashDownloaded(btn);
       });
       return btn;
     }
@@ -388,15 +388,20 @@
     // Normalise a team name the same way the server does (strip, lower, collapse spaces).
     function normTeam(s) { return String(s || '').trim().toLowerCase().replace(/\s+/g, ' '); }
 
-    // If this fixture has saved odds, return a "View Odds" cell linking to its odds page.
-    // Odds are keyed by "<round>|<home> vs <away>"; try the reversed pair too in case the
-    // scraped match string ordered the teams differently from the fixture.
-    function oddsCell(f) {
-      if (!f.home_team || !f.away_team) return '';
+    // The stored-odds key for this fixture, or null if it has no saved odds. Odds are
+    // keyed by "<round>|<home> vs <away>"; try the reversed pair too in case the scraped
+    // match string ordered the teams differently from the fixture.
+    function matchedOddsKey(f) {
+      if (!f.home_team || !f.away_team) return null;
       const n = gamblorRound(f).n;
       const fwd = `${n}|${normTeam(f.home_team)} vs ${normTeam(f.away_team)}`;
       const rev = `${n}|${normTeam(f.away_team)} vs ${normTeam(f.home_team)}`;
-      const matched = oddsKeys.has(fwd) ? fwd : (oddsKeys.has(rev) ? rev : null);
+      return oddsByKey.has(fwd) ? fwd : (oddsByKey.has(rev) ? rev : null);
+    }
+
+    // If this fixture has saved odds, return a "View Odds" cell linking to its odds page.
+    function oddsCell(f) {
+      const matched = matchedOddsKey(f);
       if (!matched) return '';
       return `<div class="odds-cell"><a class="view-odds"
                 href="game_odds.html?match=${encodeURIComponent(matched)}">View Odds →</a></div>`;
@@ -448,7 +453,7 @@
            </h2>
            <div class="tile-range">${esc(round.label)} · ${items.length} ${items.length === 1 ? 'match' : 'matches'}${complete ? ' · <span class="done">✓ complete</span>' : ''}</div>`;
         head.appendChild(heading);
-        head.appendChild(makeCopyButton(round, items));
+        head.appendChild(makeDownloadButton(round, items));
         tile.appendChild(head);
 
         const body = document.createElement('div');
@@ -469,25 +474,28 @@
       list.appendChild(fragment);
     }
 
-    // Fetch the set of match keys that currently have saved odds. Never throws —
-    // a failure just means no "View Odds" buttons appear.
-    async function loadOddsKeys() {
+    // Fetch saved odds (with markets) as a Map keyed by match_key. Never throws —
+    // a failure just means no "View Odds" buttons and no odds in the export.
+    async function loadOdds() {
+      const map = new Map();
       try {
-        const r = await fetch('/api/game_odds');
+        const r = await fetch('/api/game_odds?include=payload');
         const j = await r.json();
         if (j && j.ok && Array.isArray(j.games)) {
-          return new Set(j.games.map(g => g.match_key).filter(Boolean));
+          for (const g of j.games) {
+            if (g && g.match_key) map.set(g.match_key, g);
+          }
         }
       } catch (e) { /* ignore */ }
-      return new Set();
+      return map;
     }
 
     async function load() {
       msg.textContent = 'Loading fixtures…';
       list.innerHTML = '';
       try {
-        const [r, keys] = await Promise.all([fetch('/api/wc'), loadOddsKeys()]);
-        oddsKeys = keys;
+        const [r, odds] = await Promise.all([fetch('/api/wc'), loadOdds()]);
+        oddsByKey = odds;
         const j = await r.json();
         if (!j.ok) throw new Error(j.error || 'failed');
         if (!j.fixtures.length) {

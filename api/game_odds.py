@@ -64,6 +64,13 @@ SELECT_LIST = (
     "ORDER BY gamblor_round ASC, match_name ASC"
 )
 
+# List view with the full payload (so callers can attach markets to each game).
+SELECT_LIST_FULL = (
+    "SELECT match_key, gamblor_round, match_name, match_date, source, "
+    "scraped_at, market_count, payload, saved_at FROM game_odds "
+    "ORDER BY gamblor_round ASC, match_name ASC"
+)
+
 SELECT_ONE = (
     "SELECT match_key, gamblor_round, match_name, match_date, source, "
     "scraped_at, market_count, payload, saved_at FROM game_odds "
@@ -263,8 +270,18 @@ def save_odds(body):
             "rounds": sorted(rounds), "saved_at": now_iso}
 
 
-def list_odds():
-    rows = turso([(CREATE_GAME_ODDS, []), (SELECT_LIST, [])])[1]
+def list_odds(include_payload=False):
+    """Stored games. With include_payload, each game also carries its parsed
+    `markets` array (and the raw payload string is dropped from the response)."""
+    sql = SELECT_LIST_FULL if include_payload else SELECT_LIST
+    rows = turso([(CREATE_GAME_ODDS, []), (sql, [])])[1]
+    if include_payload:
+        for row in rows:
+            try:
+                payload = json.loads(row.pop("payload", None) or "{}")
+            except ValueError:
+                payload = {}
+            row["markets"] = payload.get("markets") or []
     return {"ok": True, "count": len(rows), "games": rows}
 
 
@@ -317,7 +334,8 @@ class handler(BaseHTTPRequestHandler):
             if match_val:
                 response = get_odds(round_val, match_val)
             else:
-                response = list_odds()
+                include = qs.get("include", [""])[0].strip().lower() == "payload"
+                response = list_odds(include_payload=include)
         except AppError as e:
             status, response = e.status, {"ok": False, "error": e.message}
         except Exception as e:
