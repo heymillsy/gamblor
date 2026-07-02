@@ -85,10 +85,11 @@ Once signed in, the home page has two tabs:
 - **Games** (default) — the fixtures list described above. Any match that has
   odds saved against it shows a **View Odds** button that opens `game_odds.html`
   with every stored market for that game (each market is a collapsible section;
-  a filter box narrows the list).
-- **Odds Input** — choose (or paste) a scraped odds JSON — the same shape the
-  per-round *copy as JSON* button emits, one Gamblor Round per file — and
-  **Save** it. Each match in the payload is stored against its game.
+  a filter box narrows the list). Each Gamblor Round tile also has a **download**
+  button that saves that round's games as a JSON file (`gamblor-round-N.json`),
+  including each game's saved odds (all markets) when odds have been added.
+- **Odds Input** — choose (or paste) a scraped odds JSON (one Gamblor Round per
+  file) and **Save** it. Each match in the payload is stored against its game.
 
 Odds are keyed by a **durable natural key** — `gamblor_round` + the normalised
 team pair (e.g. `7|spain vs austria`) — because `wc_matches.fixture_id` is a
