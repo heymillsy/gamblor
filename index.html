@@ -142,6 +142,7 @@
     <section id="games-tab" role="tabpanel">
       <div class="bar">
         <span id="msg">Loading…</span>
+        <button id="refresh" class="secondary" type="button">↻ Refresh</button>
       </div>
       <div id="list"></div>
     </section>
@@ -360,6 +361,7 @@ balanced objective:
     const loginBtn = document.getElementById('login-btn');
     const msg = document.getElementById('msg');
     const list = document.getElementById('list');
+    const refreshBtn = document.getElementById('refresh');
 
     // Tabs + Odds Input
     const tabGames = document.getElementById('tab-games');
@@ -851,10 +853,11 @@ balanced objective:
 
     // Fetch saved odds (with markets) as a Map keyed by match_key. Never throws —
     // a failure just means no "View Odds" buttons and no odds in the export.
-    async function loadOdds() {
+    async function loadOdds(forceRefresh) {
       const map = new Map();
       try {
-        const r = await fetch('/api/game_odds?include=payload');
+        const opts = forceRefresh ? { cache: 'no-store' } : undefined;
+        const r = await fetch('/api/game_odds?include=payload', opts);
         const j = await r.json();
         if (j && j.ok && Array.isArray(j.games)) {
           for (const g of j.games) {
@@ -865,11 +868,18 @@ balanced objective:
       return map;
     }
 
-    async function load() {
+    // `forceRefresh` sends `cache: 'no-store'` so an explicit refresh (the button,
+    // or a reload after saving odds) bypasses the CDN cache and fetches the
+    // freshest data. The initial page load leaves it false to use the normal
+    // cache (`s-maxage=300`) and avoid needless serverless/database load.
+    async function load(forceRefresh = false) {
       msg.textContent = 'Loading fixtures…';
       list.innerHTML = '';
+      refreshBtn.disabled = true;
       try {
-        const [r, odds] = await Promise.all([fetch('/api/wc'), loadOdds()]);
+        const opts = forceRefresh ? { cache: 'no-store' } : undefined;
+        const [r, odds] = await Promise.all([
+          fetch('/api/wc', opts), loadOdds(forceRefresh)]);
         oddsByKey = odds;
         const j = await r.json();
         if (!j.ok) throw new Error(j.error || 'failed');
@@ -883,8 +893,12 @@ balanced objective:
         render(j.fixtures);
       } catch (e) {
         msg.textContent = 'Error: ' + e.message;
+      } finally {
+        refreshBtn.disabled = false;
       }
     }
+
+    refreshBtn.addEventListener('click', () => load(true));
 
     // --- Tabs ----------------------------------------------------------------
     // Each tab: its button, its panel, and the name used to select it.
@@ -995,7 +1009,7 @@ balanced objective:
         const rounds = Array.isArray(j.rounds) ? j.rounds.join(', ') : '';
         setOddsStatus(`Saved ${j.saved} ${j.saved === 1 ? 'match' : 'matches'}` +
                       (rounds ? ` (Gamblor Round ${rounds}).` : '.'), 'ok');
-        await load();  // refresh odds keys + fixtures so "View Odds" appears
+        await load(true);  // force-refresh odds keys + fixtures so "View Odds" appears
       } catch (e) {
         setOddsStatus('Error: ' + e.message, 'err');
       } finally {
