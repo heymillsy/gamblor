@@ -191,7 +191,7 @@ For each match in the INPUT list, open its match page on tab.co.nz and capture *
 
 ## Output schema
 
-Return a single JSON object. Keep the top-level `gamblor_round`, `dates`, `match_count`, and `matches` exactly as given in INPUT. For each match, copy every existing field unchanged and add an `odds` object:
+Return a single JSON object. Keep the top-level `gamblor_round`, `dates`, `match_count`, and `matches` exactly as given in INPUT. `gamblor_round` is the **integer** at the top level of INPUT (for example `8`) — copy that number verbatim. Do not confuse it with a match's `round` field, which is a stage name such as `"Round of 16"`; the top-level `gamblor_round` is never a string and never a stage name. For each match, copy every existing field unchanged and add an `odds` object:
 
 ```json
 {
@@ -233,6 +233,7 @@ Return a single JSON object. Keep the top-level `gamblor_round`, `dates`, `match
 
 ### Field rules
 
+- `gamblor_round`: the integer copied verbatim from the top level of INPUT (for example `8`). It is always a number, never a string. It is **not** a match's `round` value (`"Round of 16"`, `"Round of 32"`); never copy that stage name into `gamblor_round`.
 - `source`: always the string `"tab.co.nz"`.
 - `scraped_at`: a single ISO 8601 UTC timestamp with milliseconds and a `Z` suffix, generated once at the start of the run and reused for every match (for example `"2026-07-02T00:50:02.433Z"`).
 - `market_count`: the integer length of that match's `markets` array. It must equal the actual number of market objects you output. Count them, do not estimate.
@@ -252,11 +253,12 @@ Return a single JSON object. Keep the top-level `gamblor_round`, `dates`, `match
 
 Work through the matches one at a time in the INPUT order. This keeps the browser session stable across the large market volume.
 
-1. Open match 1, expand and capture all markets, then output that single completed match object as a JSON code block labelled with the match (for example `Spain vs Austria`). Include its `market_count`.
-2. Repeat for each remaining match, outputting one code block per match as you finish it. Emitting each game as you go means nothing is lost if the session is interrupted.
-3. After the last match, output the complete assembled JSON object (all matches inside the full top-level structure) as the final deliverable.
+1. Open match 1, expand and capture all markets, then output that single completed match object as a JSON code block labelled with the match (for example `Spain vs Austria`). Include its `market_count`. These per-match blocks are working output for resilience — if the session is interrupted, nothing captured so far is lost.
+2. Repeat for each remaining match, outputting one code block per match as you finish it.
+3. After the last match, assemble every captured match into the full top-level structure (the same `gamblor_round`, `dates`, `match_count`, and `matches` from INPUT, with each match now carrying its `odds` object).
+4. **Final deliverable: a single downloadable JSON file** containing that complete assembled object. Write it to one `.json` file the user can download in one click and name it `gamblor-round-{gamblor_round}-odds.json`, substituting the actual integer (for example `gamblor-round-8-odds.json`). This one file is the entire deliverable — the user must not have to copy, paste, or stitch together the per-match code blocks themselves.
 
-Before delivering each match block, self-check: does `market_count` equal the number of market objects, are all `odds` values strings, and did you keep duplicate markets rather than merging them?
+Before delivering, self-check the whole file: is `gamblor_round` the integer from INPUT (not a stage-name string), does each match's `market_count` equal its number of market objects, are all `odds` values strings, and did you keep duplicate markets rather than merging them?
 
 ## INPUT
 
