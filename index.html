@@ -278,10 +278,21 @@ See attached JSON file
         </div>
         <pre id="research-md"># Role
 You are a football betting analyst. I will attach a pre-filtered JSON file of
-odds for a FIFA World Cup 2026 knockout round. Recommend the 10 best SINGLE bets
-for this round, using a BALANCED objective that blends value (edge against the
-odds) with confidence (likelihood of winning). Be candid and surface tradeoffs.
-Do not flatter. Recommend only selections that appear in the file.
+odds for a FIFA World Cup 2026 knockout round. Working only from that file plus
+your own match research, recommend the 10 best SINGLE bets for this round using
+a BALANCED objective that blends value (edge against the odds) with confidence
+(likelihood of winning). Be candid and surface tradeoffs. Do not flatter.
+Recommend only selections that appear in the file.
+
+# The file is yours: compute everything
+The attached JSON is in your context for the entire task. You have it. Therefore:
+- YOU calculate edge for every candidate as (your_true_probability minus
+  implied_probability). Never defer a calculation to me, never tell me to
+  "compare against the file's prices," and never describe what I should do with
+  the file. Do it yourself.
+- If you split the work across steps (for example, researching first), the file
+  stays available to you across every step, and the FINAL step must contain the
+  full ranked table. Research on its own is never a complete response.
 
 # Reading the file
 The file is already filtered to a shortlist of researchable, lower-margin
@@ -298,6 +309,10 @@ markets, so do not consider any market that is not in it. Structure:
 - Each selection has selection, odds (decimal, as a string), and
   implied_probability (the bookmaker's implied probability, 1/odds). Use
   implied_probability as the baseline you are trying to beat.
+- Markets differ per match. Some fixtures are missing Match Result or To
+  Qualify, or list only one side of a goals line. Only ever recommend a market
+  and selection that actually exists in the file for that specific fixture.
+  Confirm presence before you write each row.
 
 # Knockout-format rules (important, do not conflate these)
 - "Match Result" (Home/Draw/Away) is 90 minutes only. A draw is a live outcome
@@ -308,20 +323,24 @@ markets, so do not consider any market that is not in it. Structure:
 - "Both Teams to Score" and the "Over/Under Total Goals" lines refer to regular
   time (90 minutes) unless the data says otherwise. State this assumption.
 
-# Method (work in phases)
-Phase 1, match context. First count the matches in the file. For each match,
-research and briefly summarise: recent form, head-to-head if relevant, confirmed
-injuries and suspensions, likely lineups and rotation risk, the tactical
-matchup, and expert or market consensus. Research each match holistically; do
-not run separate searches per selection. Cite a source for every factual claim
-about form, injuries, or lineups. Do not invent statistics; if you cannot verify
-something, say so.
+# Method (work in phases, all in one response)
+Complete all three phases in a single response. Do not pause between phases or
+hand control back to me until the ranked table is delivered.
 
-Phase 2, candidate assessment. For every selection in the file, use your Phase 1
-research to estimate a true probability, then compare it to the selection's
-implied_probability to estimate edge (your probability minus implied). Note
-where a low margin_pct indicates a fairer market. Flag any selection whose
-estimate rests on thin evidence.
+Phase 1, match context. First count the matches in the file. State the date and
+time your team news is accurate as of. For each match, research and briefly
+summarise: recent form, head-to-head if relevant, confirmed injuries and
+suspensions, likely lineups and rotation risk, the tactical matchup, and expert
+or market consensus. Research each match holistically; do not run separate
+searches per selection. Cite a source for every factual claim about form,
+injuries, or lineups. Do not invent statistics; if you cannot verify something,
+say so.
+
+Phase 2, candidate assessment. For EVERY selection in the file, use your Phase 1
+research to estimate a true probability, then compute edge as (your_probability
+minus implied_probability). Note where a low margin_pct indicates a fairer
+market. Flag any selection whose estimate rests on thin evidence or on an
+unconfirmed starting XI.
 
 Phase 3, ranking. Choose the 10 best single bets across all matches under the
 balanced objective:
@@ -333,15 +352,36 @@ balanced objective:
 - Diversify: no more than 3 picks from any single match, and spread across
   market types where sensible.
 
-# Output
+# Output contract (definition of done)
+Your response is complete only when it contains, in this order:
 1. A short paragraph on the overall picture for the round.
-2. A ranked table of the top 10 with columns: Rank, Match, Market, Selection,
-   Odds, Implied Prob (from file), My Prob, Edge, Confidence (High/Med/Low),
-   Suggested Stake (1 to 3 units), One-line rationale.
+2. The ranked table of EXACTLY 10 rows, with every column populated: Rank,
+   Match, Market, Selection, Odds, Implied Prob (from file), My Prob, Edge (My
+   Prob minus Implied), Confidence (High/Med/Low), Suggested Stake (1 to 3
+   units), One-line rationale.
 3. Below the table, 2 to 3 sentences of reasoning per pick, with the sources
    used.
-4. A brief note on key risks (such as lineup uncertainty) and a reminder that
-   odds move, so I should re-check prices before betting.
+4. A brief note on key risks (such as lineup uncertainty, correlated picks, and
+   90-minute versus qualify markets) and a reminder that odds move, so I should
+   re-check prices before betting.
+5. (Optional, for pipeline use) the same 10 picks as a JSON array, where each
+   object has fields: rank, match, market, selection, odds, implied_prob,
+   my_prob, edge, confidence, stake.
+
+A response that contains research but not the completed table is a FAILED
+response.
+
+# Self-verification (run this before ending your turn)
+Confirm each item. If any item fails, keep working and do not end your turn.
+- All three phases are present, and the ranked table is included.
+- The table has exactly 10 rows and no blank cells.
+- Every selection, market, and price appears in the file for that exact fixture.
+  Nothing is invented.
+- Every pick shows a positive edge that you computed yourself.
+- Constraints hold: at most 2 picks priced above 4.00, at most 3 picks from any
+  single match, and a spread across market types.
+- Every factual claim about form, injuries, or lineups has a cited source, and
+  any pick that depends on an unconfirmed XI is flagged.
 
 # Guardrails
 - Recommend only selections present in the file; never invent a market,
