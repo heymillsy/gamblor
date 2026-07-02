@@ -142,6 +142,7 @@
     <section id="games-tab" role="tabpanel">
       <div class="bar">
         <span id="msg">Loading…</span>
+        <button id="refresh" class="secondary" type="button">↻ Refresh</button>
       </div>
       <div id="list"></div>
     </section>
@@ -360,6 +361,7 @@ balanced objective:
     const loginBtn = document.getElementById('login-btn');
     const msg = document.getElementById('msg');
     const list = document.getElementById('list');
+    const refreshBtn = document.getElementById('refresh');
 
     // Tabs + Odds Input
     const tabGames = document.getElementById('tab-games');
@@ -854,7 +856,7 @@ balanced objective:
     async function loadOdds() {
       const map = new Map();
       try {
-        const r = await fetch('/api/game_odds?include=payload');
+        const r = await fetch('/api/game_odds?include=payload', { cache: 'no-store' });
         const j = await r.json();
         if (j && j.ok && Array.isArray(j.games)) {
           for (const g of j.games) {
@@ -868,8 +870,12 @@ balanced objective:
     async function load() {
       msg.textContent = 'Loading fixtures…';
       list.innerHTML = '';
+      refreshBtn.disabled = true;
       try {
-        const [r, odds] = await Promise.all([fetch('/api/wc'), loadOdds()]);
+        // `cache: 'no-store'` skips the browser/CDN cache so a manual refresh
+        // always fetches the freshest stored fixtures + odds.
+        const [r, odds] = await Promise.all([
+          fetch('/api/wc', { cache: 'no-store' }), loadOdds()]);
         oddsByKey = odds;
         const j = await r.json();
         if (!j.ok) throw new Error(j.error || 'failed');
@@ -883,8 +889,12 @@ balanced objective:
         render(j.fixtures);
       } catch (e) {
         msg.textContent = 'Error: ' + e.message;
+      } finally {
+        refreshBtn.disabled = false;
       }
     }
+
+    refreshBtn.addEventListener('click', () => load());
 
     // --- Tabs ----------------------------------------------------------------
     // Each tab: its button, its panel, and the name used to select it.
