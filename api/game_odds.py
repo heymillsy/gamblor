@@ -281,6 +281,8 @@ def list_odds(include_payload=False):
                 payload = json.loads(row.pop("payload", None) or "{}")
             except ValueError:
                 payload = {}
+            if not isinstance(payload, dict):
+                payload = {}
             row["markets"] = payload.get("markets") or []
     return {"ok": True, "count": len(rows), "games": rows}
 
@@ -304,6 +306,8 @@ def get_odds(round_val, match_val):
     try:
         payload = json.loads(row.get("payload") or "{}")
     except ValueError:
+        payload = {}
+    if not isinstance(payload, dict):
         payload = {}
     return {
         "ok": True, "found": True, "match_key": key,

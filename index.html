@@ -301,7 +301,8 @@
       document.body.appendChild(a);
       a.click();
       a.remove();
-      URL.revokeObjectURL(url);
+      // Defer revocation so browsers (Firefox/Safari) can start the download first.
+      setTimeout(() => URL.revokeObjectURL(url), 100);
     }
 
     function makeDownloadButton(round, items) {
