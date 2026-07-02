@@ -67,6 +67,34 @@
                    background: transparent; color: inherit; }
     .login button { width: 100%; margin-top: 1.2rem; padding: .7rem; }
     #login-error { color: #dc2626; font-size: .85rem; min-height: 1.2em; margin-top: .6rem; }
+
+    /* Tabs */
+    .tabs { display: flex; gap: .3rem; align-items: center; margin: 1rem 0 .3rem;
+            border-bottom: 1px solid rgba(127,127,127,.22); }
+    .tab { background: transparent; color: #888; font-weight: 700; font-size: .95rem;
+           border-radius: .5rem .5rem 0 0; padding: .5rem .9rem; margin-bottom: -1px; }
+    .tab.active { color: #1463ff; box-shadow: inset 0 -2px 0 #1463ff; }
+    .tab-logout { margin-left: auto; padding: .4rem .8rem; font-size: .85rem; }
+
+    /* Odds Input tab */
+    .odds-input { margin-top: .8rem; }
+    .odds-input label { display: block; font-weight: 600; font-size: .9rem; margin: .8rem 0 .3rem; }
+    .odds-input input[type=file] { font-size: .9rem; }
+    .odds-input textarea { width: 100%; box-sizing: border-box; min-height: 220px; resize: vertical;
+           font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .8rem;
+           padding: .6rem .7rem; border: 1px solid rgba(127,127,127,.45); border-radius: .5rem;
+           background: transparent; color: inherit; }
+    #odds-save { margin-top: .8rem; }
+    #odds-status { font-size: .9rem; margin: .6rem 0; min-height: 1.2em; color: #888; }
+    #odds-status.ok { color: #16a34a; }
+    #odds-status.err { color: #dc2626; }
+
+    /* View Odds link on a fixture row (lands in the empty row-2 / col-2 cell) */
+    .fx .odds-cell { grid-column: 2; justify-self: end; }
+    a.view-odds { display: inline-block; font-size: .72rem; font-weight: 700; text-decoration: none;
+           color: #1463ff; border: 1px solid rgba(20,99,255,.5); border-radius: .4rem;
+           padding: .15rem .45rem; white-space: nowrap; }
+    a.view-odds:hover { background: rgba(20,99,255,.1); }
   </style>
 </head>
 <body>
@@ -89,11 +117,34 @@
 
   <!-- App view (fixtures + results) -->
   <section id="app-view" class="hidden">
-    <div class="bar">
-      <span id="msg">Loading…</span>
-      <button id="logout" class="secondary">Log out</button>
+    <div class="tabs" role="tablist">
+      <button id="tab-games" class="tab active" role="tab" aria-selected="true">Games</button>
+      <button id="tab-odds" class="tab" role="tab" aria-selected="false">Odds Input</button>
+      <button id="logout" class="secondary tab-logout">Log out</button>
     </div>
-    <div id="list"></div>
+
+    <!-- Games tab -->
+    <section id="games-tab" role="tabpanel">
+      <div class="bar">
+        <span id="msg">Loading…</span>
+      </div>
+      <div id="list"></div>
+    </section>
+
+    <!-- Odds Input tab -->
+    <section id="odds-input-tab" class="hidden" role="tabpanel">
+      <div class="odds-input">
+        <p class="sub">Upload a scraped odds JSON (one Gamblor Round) to attach odds to
+          each game. Matches are keyed by round + team names.</p>
+        <label for="odds-file">Choose a JSON file</label>
+        <input id="odds-file" type="file" accept=".json,application/json" />
+        <label for="odds-text">…or paste / edit the JSON</label>
+        <textarea id="odds-text" spellcheck="false"
+                  placeholder='{ "gamblor_round": 7, "matches": [ … ] }'></textarea>
+        <p id="odds-status"></p>
+        <button id="odds-save" type="button">Save odds</button>
+      </div>
+    </section>
   </section>
 
   <script>
@@ -105,6 +156,19 @@
     const loginBtn = document.getElementById('login-btn');
     const msg = document.getElementById('msg');
     const list = document.getElementById('list');
+
+    // Tabs + Odds Input
+    const tabGames = document.getElementById('tab-games');
+    const tabOdds = document.getElementById('tab-odds');
+    const gamesTab = document.getElementById('games-tab');
+    const oddsTab = document.getElementById('odds-input-tab');
+    const oddsFile = document.getElementById('odds-file');
+    const oddsText = document.getElementById('odds-text');
+    const oddsSave = document.getElementById('odds-save');
+    const oddsStatus = document.getElementById('odds-status');
+
+    // Match keys (round + normalised team pair) that have saved odds.
+    let oddsKeys = new Set();
 
     function getToken() { return localStorage.getItem(TOKEN_KEY) || ''; }
 
@@ -321,6 +385,23 @@
       return d < GAMBLOR_ROUNDS[0].start ? GAMBLOR_ROUNDS[0] : last;
     }
 
+    // Normalise a team name the same way the server does (strip, lower, collapse spaces).
+    function normTeam(s) { return String(s || '').trim().toLowerCase().replace(/\s+/g, ' '); }
+
+    // If this fixture has saved odds, return a "View Odds" cell linking to its odds page.
+    // Odds are keyed by "<round>|<home> vs <away>"; try the reversed pair too in case the
+    // scraped match string ordered the teams differently from the fixture.
+    function oddsCell(f) {
+      if (!f.home_team || !f.away_team) return '';
+      const n = gamblorRound(f).n;
+      const fwd = `${n}|${normTeam(f.home_team)} vs ${normTeam(f.away_team)}`;
+      const rev = `${n}|${normTeam(f.away_team)} vs ${normTeam(f.home_team)}`;
+      const matched = oddsKeys.has(fwd) ? fwd : (oddsKeys.has(rev) ? rev : null);
+      if (!matched) return '';
+      return `<div class="odds-cell"><a class="view-odds"
+                href="game_odds.html?match=${encodeURIComponent(matched)}">View Odds →</a></div>`;
+    }
+
     function fixtureRow(f) {
       // Keep the original groupings (matchday/knockout round + group) in the meta.
       const meta = [f.round, f.group, f.venue, f.city].filter(Boolean).join(' · ');
@@ -329,7 +410,8 @@
       row.innerHTML =
         `<div class="teams">${team(f.home_team)} <span style="color:#888">v</span> ${team(f.away_team)}</div>
          ${rightCol(f)}
-         ${meta ? `<div class="meta">${esc(meta)}</div>` : ''}`;
+         ${meta ? `<div class="meta">${esc(meta)}</div>` : ''}
+         ${oddsCell(f)}`;
       return row;
     }
 
@@ -387,11 +469,25 @@
       list.appendChild(fragment);
     }
 
+    // Fetch the set of match keys that currently have saved odds. Never throws —
+    // a failure just means no "View Odds" buttons appear.
+    async function loadOddsKeys() {
+      try {
+        const r = await fetch('/api/game_odds');
+        const j = await r.json();
+        if (j && j.ok && Array.isArray(j.games)) {
+          return new Set(j.games.map(g => g.match_key).filter(Boolean));
+        }
+      } catch (e) { /* ignore */ }
+      return new Set();
+    }
+
     async function load() {
       msg.textContent = 'Loading fixtures…';
       list.innerHTML = '';
       try {
-        const r = await fetch('/api/wc');
+        const [r, keys] = await Promise.all([fetch('/api/wc'), loadOddsKeys()]);
+        oddsKeys = keys;
         const j = await r.json();
         if (!j.ok) throw new Error(j.error || 'failed');
         if (!j.fixtures.length) {
@@ -406,6 +502,69 @@
         msg.textContent = 'Error: ' + e.message;
       }
     }
+
+    // --- Tabs ----------------------------------------------------------------
+    function switchTab(which) {
+      const games = which === 'games';
+      tabGames.classList.toggle('active', games);
+      tabOdds.classList.toggle('active', !games);
+      tabGames.setAttribute('aria-selected', String(games));
+      tabOdds.setAttribute('aria-selected', String(!games));
+      gamesTab.classList.toggle('hidden', !games);
+      oddsTab.classList.toggle('hidden', games);
+    }
+    tabGames.addEventListener('click', () => switchTab('games'));
+    tabOdds.addEventListener('click', () => switchTab('odds'));
+
+    // --- Odds Input ----------------------------------------------------------
+    function setOddsStatus(text, kind) {
+      oddsStatus.textContent = text;
+      oddsStatus.className = kind || '';
+    }
+
+    oddsFile.addEventListener('change', () => {
+      const file = oddsFile.files && oddsFile.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        oddsText.value = reader.result;
+        setOddsStatus(`Loaded ${file.name} — review and Save.`, '');
+      };
+      reader.onerror = () => setOddsStatus('Could not read that file.', 'err');
+      reader.readAsText(file);
+    });
+
+    async function saveOdds() {
+      const text = oddsText.value.trim();
+      if (!text) { setOddsStatus('Choose a file or paste JSON first.', 'err'); return; }
+      let data;
+      try { data = JSON.parse(text); }
+      catch (e) { setOddsStatus('Invalid JSON: ' + e.message, 'err'); return; }
+      if (!data || !Array.isArray(data.matches) || !data.matches.length) {
+        setOddsStatus('JSON must contain a non-empty "matches" array.', 'err'); return;
+      }
+      oddsSave.disabled = true;
+      setOddsStatus('Saving…', '');
+      try {
+        const r = await fetch('/api/game_odds', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json',
+                     'Authorization': 'Bearer ' + getToken() },
+          body: JSON.stringify(data),
+        });
+        const j = await r.json();
+        if (!j.ok) throw new Error(j.error || 'Save failed');
+        const rounds = Array.isArray(j.rounds) ? j.rounds.join(', ') : '';
+        setOddsStatus(`Saved ${j.saved} ${j.saved === 1 ? 'match' : 'matches'}` +
+                      (rounds ? ` (Gamblor Round ${rounds}).` : '.'), 'ok');
+        await load();  // refresh odds keys + fixtures so "View Odds" appears
+      } catch (e) {
+        setOddsStatus('Error: ' + e.message, 'err');
+      } finally {
+        oddsSave.disabled = false;
+      }
+    }
+    oddsSave.addEventListener('click', saveOdds);
 
     // --- Boot ----------------------------------------------------------------
     (async () => {
