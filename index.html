@@ -10,12 +10,14 @@
            padding: 0 1rem; line-height: 1.4; }
     h1 { margin-bottom: .2rem; }
     .sub { color: #888; margin-top: 0; font-size: .9rem; }
-    .bar { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center;
-           justify-content: space-between; margin: 1rem 0; }
+    .bar { display: flex; gap: .5rem; flex-wrap: nowrap; align-items: center;
+           margin: 1rem 0; }
     button { padding: .55rem .9rem; border-radius: .5rem; border: 0; background: #1463ff;
              color: #fff; font-weight: 600; font-size: .95rem; cursor: pointer; }
     button.secondary { background: rgba(127,127,127,.2); color: inherit; }
-    #msg { color: #888; font-size: .9rem; }
+    #msg { color: #888; font-size: .9rem; min-width: 0; }
+    /* Keep Refresh on the same line as #msg, pinned to the right. */
+    #refresh { flex: 0 0 auto; margin-left: auto; white-space: nowrap; }
     .hidden { display: none; }
 
     /* Gamblor Round tiles */
