@@ -761,15 +761,59 @@ balanced objective:
     // Normalise a team name the same way the server does (strip, lower, collapse spaces).
     function normTeam(s) { return String(s || '').trim().toLowerCase().replace(/\s+/g, ' '); }
 
+    // Known team-name aliases. Each inner array is ONE team; every spelling in it is
+    // treated as the same team when matching a fixture to uploaded odds — so an odds
+    // file that says "USA" still attaches to the "United States" fixture, in either
+    // direction. Spellings are compared after normTeam() (lower/trim/collapse), so
+    // list them in plain lower case. Add a row (or a spelling) as new mismatches show up.
+    const TEAM_ALIASES = [
+      ['united states', 'usa', 'us', 'u.s.a.', 'u.s.', 'united states of america'],
+      ['south korea', 'korea republic', 'korea', 'republic of korea'],
+      ['north korea', 'korea dpr', 'dpr korea'],
+      ['ivory coast', "cote d'ivoire", 'côte d’ivoire'],
+      ['iran', 'ir iran', 'islamic republic of iran'],
+      ['czechia', 'czech republic'],
+      ['china', 'china pr'],
+      ['bosnia and herzegovina', 'bosnia', 'bosnia-herzegovina'],
+      ['cape verde', 'cabo verde'],
+      ['turkey', 'türkiye', 'turkiye'],
+      ['uae', 'united arab emirates'],
+      ['dr congo', 'democratic republic of the congo', 'congo dr', 'drc'],
+    ];
+
+    // Normalised member spelling -> the full array of normalised spellings in its
+    // group, so any alias expands to every alias (symmetric, both directions).
+    const ALIAS_GROUP = (() => {
+      const m = new Map();
+      for (const group of TEAM_ALIASES) {
+        const g = group.map(normTeam);
+        for (const name of g) m.set(name, g);
+      }
+      return m;
+    })();
+
+    // Every known spelling for a team (including itself), normTeam-normalised.
+    function teamAliases(name) {
+      const key = normTeam(name);
+      return ALIAS_GROUP.get(key) || [key];
+    }
+
     // The stored-odds key for this fixture, or null if it has no saved odds. Odds are
-    // keyed by "<round>|<home> vs <away>"; try the reversed pair too in case the scraped
-    // match string ordered the teams differently from the fixture.
+    // keyed by "<round>|<home> vs <away>". Try every known alias spelling of each team
+    // and the reversed pair too, in case the scraped match string named a team
+    // differently or ordered the pair the other way from the fixture.
     function matchedOddsKey(f) {
       if (!f.home_team || !f.away_team) return null;
       const n = gamblorRound(f).n;
-      const fwd = `${n}|${normTeam(f.home_team)} vs ${normTeam(f.away_team)}`;
-      const rev = `${n}|${normTeam(f.away_team)} vs ${normTeam(f.home_team)}`;
-      return oddsByKey.has(fwd) ? fwd : (oddsByKey.has(rev) ? rev : null);
+      for (const h of teamAliases(f.home_team)) {
+        for (const a of teamAliases(f.away_team)) {
+          const fwd = `${n}|${h} vs ${a}`;
+          if (oddsByKey.has(fwd)) return fwd;
+          const rev = `${n}|${a} vs ${h}`;
+          if (oddsByKey.has(rev)) return rev;
+        }
+      }
+      return null;
     }
 
     // If this fixture has saved odds, return a "View Odds" cell linking to its odds page.
