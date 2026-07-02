@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>gamblor — game odds</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: system-ui, sans-serif; max-width: 680px; margin: 1.5rem auto;
+           padding: 0 1rem; line-height: 1.4; }
+    a.back { color: #1463ff; text-decoration: none; font-size: .9rem; }
+    h1 { margin: .3rem 0; font-size: 1.3rem; }
+    .when { color: #888; font-size: .85rem; margin-top: 0; }
+    #msg { color: #888; font-size: .9rem; }
+    .meta { color: #888; font-size: .8rem; margin: 1rem 0; }
+    .hidden { display: none; }
+
+    /* Filter box */
+    #filter { width: 100%; box-sizing: border-box; padding: .55rem .7rem; font-size: .95rem;
+              border: 1px solid rgba(127,127,127,.45); border-radius: .5rem;
+              background: transparent; color: inherit; margin: .8rem 0 .4rem; }
+
+    /* Collapsible market tiles (mirrors the Gamblor Round tiles on the home page) */
+    .tile { border: 1px solid rgba(127,127,127,.28); border-radius: .8rem;
+            padding: 0 .9rem; margin: .6rem 0; background: rgba(127,127,127,.04); }
+    .tile-toggle { display: flex; width: 100%; align-items: center; gap: .5rem; background: none;
+                   border: 0; padding: .7rem .1rem; margin: 0; font: inherit; color: inherit;
+                   cursor: pointer; text-align: left; }
+    .tile-toggle .chev { display: inline-flex; color: #888; transition: transform .15s ease; }
+    .tile.collapsed .tile-toggle .chev { transform: rotate(-90deg); }
+    .tile-toggle .name { flex: 1 1 auto; min-width: 0; font-weight: 700; }
+    .tile-toggle .count { color: #888; font-size: .8rem; }
+    .tile.collapsed .tile-body { display: none; }
+    .tile-body { padding-bottom: .6rem; }
+    .row { display: flex; justify-content: space-between; gap: 1rem;
+           padding: .3rem .2rem; border-bottom: 1px solid rgba(127,127,127,.15); }
+    .row:last-child { border-bottom: 0; }
+    .row .name { overflow: hidden; text-overflow: ellipsis; }
+    .row .price { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+  </style>
+</head>
+<body>
+  <a class="back" href="/">← Fixtures</a>
+  <h1 id="title">Game odds</h1>
+  <p class="when" id="when"></p>
+  <p id="msg">Loading…</p>
+  <input id="filter" type="search" placeholder="Filter markets…" class="hidden" />
+  <div id="odds"></div>
+
+  <script>
+    const params = new URLSearchParams(location.search);
+    const matchParam = params.get('match') || '';
+    const roundParam = params.get('round') || '';
+    const msg = document.getElementById('msg');
+    const oddsEl = document.getElementById('odds');
+    const filterEl = document.getElementById('filter');
+
+    // Chevron points down when expanded; CSS rotates it -90° when collapsed.
+    const CHEVRON_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" ' +
+      'stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" ' +
+      'aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>';
+
+    function esc(s) {
+      return String(s).replace(/[&<>"']/g, c => (
+        {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
+    function fmt(iso) {
+      if (!iso) return '';
+      const d = new Date(iso);
+      return isNaN(d) ? iso : d.toLocaleString([], {weekday:'short', month:'short',
+                              day:'numeric', hour:'2-digit', minute:'2-digit'});
+    }
+
+    function marketTile(m) {
+      const selections = Array.isArray(m.selections) ? m.selections : [];
+      const tile = document.createElement('section');
+      tile.className = 'tile collapsed';
+      tile.dataset.name = String(m.market || '').toLowerCase();
+
+      const rows = selections.map(s =>
+        `<div class="row"><span class="name">${esc(s.selection)}</span>
+         <span class="price">${esc(s.odds)}</span></div>`).join('');
+
+      tile.innerHTML =
+        `<button type="button" class="tile-toggle" aria-expanded="false">
+           <span class="chev">${CHEVRON_ICON}</span>
+           <span class="name">${esc(m.market || 'Market')}</span>
+           <span class="count">${selections.length}</span>
+         </button>
+         <div class="tile-body">${rows}</div>`;
+
+      const toggle = tile.querySelector('.tile-toggle');
+      toggle.addEventListener('click', () => {
+        const collapsed = tile.classList.toggle('collapsed');
+        toggle.setAttribute('aria-expanded', String(!collapsed));
+      });
+      return tile;
+    }
+
+    function render(j) {
+      document.getElementById('title').textContent = j.match_name || 'Game odds';
+      document.getElementById('when').textContent =
+        [fmt(j.match_date), j.gamblor_round ? `Gamblor Round ${j.gamblor_round}` : '']
+          .filter(Boolean).join(' · ');
+
+      const markets = Array.isArray(j.markets) ? j.markets : [];
+      oddsEl.innerHTML = '';
+      if (!markets.length) {
+        msg.textContent = 'No markets stored for this game.';
+        return;
+      }
+      msg.textContent = '';
+      filterEl.classList.remove('hidden');
+
+      const frag = document.createDocumentFragment();
+      for (const m of markets) frag.appendChild(marketTile(m));
+      oddsEl.appendChild(frag);
+
+      const meta = document.createElement('p');
+      meta.className = 'meta';
+      meta.textContent = `${markets.length} markets` +
+        (j.source ? ` · ${j.source}` : '') +
+        (j.scraped_at ? ` · scraped ${fmt(j.scraped_at)}` : '');
+      oddsEl.appendChild(meta);
+    }
+
+    filterEl.addEventListener('input', () => {
+      const q = filterEl.value.trim().toLowerCase();
+      for (const tile of oddsEl.querySelectorAll('.tile')) {
+        tile.classList.toggle('hidden', q && !tile.dataset.name.includes(q));
+      }
+    });
+
+    async function load() {
+      if (!matchParam) { msg.textContent = 'Missing match.'; return; }
+      try {
+        const qs = 'match=' + encodeURIComponent(matchParam) +
+                   (roundParam ? '&round=' + encodeURIComponent(roundParam) : '');
+        const r = await fetch('/api/game_odds?' + qs);
+        const j = await r.json();
+        if (!j.ok) throw new Error(j.error || 'failed');
+        if (!j.found) { msg.textContent = 'No odds saved for this game yet.'; return; }
+        render(j);
+      } catch (e) {
+        msg.textContent = 'Error: ' + e.message;
+      }
+    }
+    load();
+  </script>
+</body>
+</html>

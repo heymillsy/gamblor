@@ -78,6 +78,31 @@ The refresh **auto-stops one week after the final** — it reads the final's dat
 from the stored schedule and, once a week past it, returns early without
 fetching. There is no external API key, quota, or credit cost.
 
+#### Games / Odds Input tabs and per-game odds
+
+Once signed in, the home page has two tabs:
+
+- **Games** (default) — the fixtures list described above. Any match that has
+  odds saved against it shows a **View Odds** button that opens `game_odds.html`
+  with every stored market for that game (each market is a collapsible section;
+  a filter box narrows the list).
+- **Odds Input** — choose (or paste) a scraped odds JSON — the same shape the
+  per-round *copy as JSON* button emits, one Gamblor Round per file — and
+  **Save** it. Each match in the payload is stored against its game.
+
+Odds are keyed by a **durable natural key** — `gamblor_round` + the normalised
+team pair (e.g. `7|spain vs austria`) — because `wc_matches.fixture_id` is a
+volatile array index rebuilt on every refresh. Backed by:
+
+| Endpoint | What it does | Cost |
+| --- | --- | --- |
+| `POST /api/game_odds` | save a scraped odds JSON (upsert one row per match); requires the login token as `Authorization: Bearer …` | 0 |
+| `GET /api/game_odds` | list stored games (keys + counts, no payload) — used to place **View Odds** buttons | 0 |
+| `GET /api/game_odds?match=<round>\|<home> vs <away>` (or `?round=N&match=Home vs Away`) | full stored markets for one game | 0 |
+
+Odds live in a `game_odds` table (auto-created; `payload` holds the per-match
+JSON incl. all markets). Re-uploading a round overwrites its matches.
+
 > The per-fixture odds view (`odds.html`, `/api/fixtures`, `/api/fixture_odds`)
 > and the-odds-api refresh cron are still available as endpoints but are no
 > longer linked from the home page.
@@ -209,6 +234,10 @@ quota.
 - `api/sgo.py` — SportsGameOdds player props (World Cup, incl. TAB); stores raw
   blobs in `sgo_snapshots`. Secret-gated.
 - `api/latest.py` — reads stored snapshots back from Turso (0 credits).
+- `api/game_odds.py` — saves/reads scraped per-game odds in the `game_odds`
+  table, keyed by round + team pair; the POST write is gated by the login token.
+- `game_odds.html` — per-game odds page (collapsible markets) linked from the
+  **View Odds** buttons on the Games tab.
 - `vercel.json` — daily cron schedule for `/api/refresh`.
 - All functions are Python **stdlib only, zero dependencies** (using `urllib`),
   for reliable serverless cold starts.
