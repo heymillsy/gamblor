@@ -91,12 +91,13 @@
     #odds-status.ok { color: #16a34a; }
     #odds-status.err { color: #dc2626; }
 
-    /* Chrome Scraper tab */
+    /* Prompt tabs (Chrome Scraper, Research) */
     .scraper { margin-top: .8rem; }
     .scraper-head { display: flex; align-items: flex-start; justify-content: space-between;
                     gap: .5rem; }
     .scraper-head .sub { margin: .2rem 0; }
-    #scraper-md { white-space: pre-wrap; word-break: break-word; overflow: auto; max-height: 60vh;
+    #scraper-md, #research-md { white-space: pre-wrap; word-break: break-word; overflow: auto;
+                  max-height: 60vh;
                   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .8rem;
                   padding: .7rem .8rem; border: 1px solid rgba(127,127,127,.45); border-radius: .5rem;
                   background: rgba(127,127,127,.06); }
@@ -133,6 +134,7 @@
       <button id="tab-games" class="tab active" role="tab" aria-selected="true">Games</button>
       <button id="tab-odds" class="tab" role="tab" aria-selected="false">Odds Input</button>
       <button id="tab-scraper" class="tab" role="tab" aria-selected="false">Chrome Scraper</button>
+      <button id="tab-research" class="tab" role="tab" aria-selected="false">Research</button>
       <button id="logout" class="secondary tab-logout">Log out</button>
     </div>
 
@@ -259,6 +261,94 @@ See attached JSON file
 </pre>
       </div>
     </section>
+
+    <!-- Research tab -->
+    <section id="research-tab" class="hidden" role="tabpanel">
+      <div class="scraper">
+        <div class="scraper-head">
+          <p class="sub">The betting-analyst research prompt. Copy it and paste it
+            into your research agent, then attach the filtered odds JSON.</p>
+          <button id="research-copy" class="dl-btn" type="button"
+                  title="Copy prompt to clipboard" aria-label="Copy prompt to clipboard"></button>
+        </div>
+        <pre id="research-md"># Role
+You are a football betting analyst. I will attach a pre-filtered JSON file of
+odds for a FIFA World Cup 2026 knockout round. Recommend the 10 best SINGLE bets
+for this round, using a BALANCED objective that blends value (edge against the
+odds) with confidence (likelihood of winning). Be candid and surface tradeoffs.
+Do not flatter. Recommend only selections that appear in the file.
+
+# Reading the file
+The file is already filtered to a shortlist of researchable, lower-margin
+markets, so do not consider any market that is not in it. Structure:
+- Each match has home_team, away_team, date. The fixture label is
+  "{home_team} vs {away_team}".
+- Markets live under match.odds.markets. Each market has a market name and a
+  selections list.
+- Complete markets (Match Result, To Qualify, Both Teams to Score, the
+  Over/Under goal lines) also carry overround and margin_pct. Lower margin_pct
+  means a fairer market where any edge is more likely to survive. Anytime
+  Goalscorer has no overround by design, since its selections are not mutually
+  exclusive; treat it accordingly.
+- Each selection has selection, odds (decimal, as a string), and
+  implied_probability (the bookmaker's implied probability, 1/odds). Use
+  implied_probability as the baseline you are trying to beat.
+
+# Knockout-format rules (important, do not conflate these)
+- "Match Result" (Home/Draw/Away) is 90 minutes only. A draw is a live outcome
+  because the tie then goes to extra time and penalties, so do not treat the
+  favourite as a near-certain winner here.
+- "To Qualify" covers the whole tie including extra time and penalties. This is
+  the "who advances" market and will differ from Match Result.
+- "Both Teams to Score" and the "Over/Under Total Goals" lines refer to regular
+  time (90 minutes) unless the data says otherwise. State this assumption.
+
+# Method (work in phases)
+Phase 1, match context. First count the matches in the file. For each match,
+research and briefly summarise: recent form, head-to-head if relevant, confirmed
+injuries and suspensions, likely lineups and rotation risk, the tactical
+matchup, and expert or market consensus. Research each match holistically; do
+not run separate searches per selection. Cite a source for every factual claim
+about form, injuries, or lineups. Do not invent statistics; if you cannot verify
+something, say so.
+
+Phase 2, candidate assessment. For every selection in the file, use your Phase 1
+research to estimate a true probability, then compare it to the selection's
+implied_probability to estimate edge (your probability minus implied). Note
+where a low margin_pct indicates a fairer market. Flag any selection whose
+estimate rests on thin evidence.
+
+Phase 3, ranking. Choose the 10 best single bets across all matches under the
+balanced objective:
+- Favour selections with positive estimated edge AND a reasonable win
+  probability.
+- Do not fill the list with longshots: at most 2 selections priced above 4.00.
+- Do not fill the list with no-value bankers: every pick must show some
+  estimated edge, not just a high probability.
+- Diversify: no more than 3 picks from any single match, and spread across
+  market types where sensible.
+
+# Output
+1. A short paragraph on the overall picture for the round.
+2. A ranked table of the top 10 with columns: Rank, Match, Market, Selection,
+   Odds, Implied Prob (from file), My Prob, Edge, Confidence (High/Med/Low),
+   Suggested Stake (1 to 3 units), One-line rationale.
+3. Below the table, 2 to 3 sentences of reasoning per pick, with the sources
+   used.
+4. A brief note on key risks (such as lineup uncertainty) and a reminder that
+   odds move, so I should re-check prices before betting.
+
+# Guardrails
+- Recommend only selections present in the file; never invent a market,
+  selection, or price.
+- Cite sources for form, injury, and lineup claims. Distinguish fact from
+  estimate.
+- These markets carry a house edge, so the baseline expectation is negative.
+  This is a ranked shortlist, not a set of guaranteed winners. Keep to a set
+  budget and treat it as entertainment.
+</pre>
+      </div>
+    </section>
   </section>
 
   <script>
@@ -277,9 +367,13 @@ See attached JSON file
     const tabScraper = document.getElementById('tab-scraper');
     const gamesTab = document.getElementById('games-tab');
     const oddsTab = document.getElementById('odds-input-tab');
+    const tabResearch = document.getElementById('tab-research');
     const scraperTab = document.getElementById('scraper-tab');
     const scraperMd = document.getElementById('scraper-md');
     const scraperCopy = document.getElementById('scraper-copy');
+    const researchTab = document.getElementById('research-tab');
+    const researchMd = document.getElementById('research-md');
+    const researchCopy = document.getElementById('research-copy');
     const oddsFile = document.getElementById('odds-file');
     const oddsText = document.getElementById('odds-text');
     const oddsSave = document.getElementById('odds-save');
@@ -798,6 +892,7 @@ See attached JSON file
       { name: 'games',   btn: tabGames,   panel: gamesTab },
       { name: 'odds',    btn: tabOdds,    panel: oddsTab },
       { name: 'scraper', btn: tabScraper, panel: scraperTab },
+      { name: 'research', btn: tabResearch, panel: researchTab },
     ];
     function switchTab(which) {
       for (const t of TABS) {
@@ -809,9 +904,7 @@ See attached JSON file
     }
     for (const t of TABS) t.btn.addEventListener('click', () => switchTab(t.name));
 
-    // --- Chrome Scraper: copy prompt to clipboard ----------------------------
-    scraperCopy.innerHTML = COPY_ICON;
-
+    // --- Prompt tabs: copy prompt to clipboard -------------------------------
     function flashCopied(btn) {
       if (btn._timeout) clearTimeout(btn._timeout);
       btn.classList.add('copied');
@@ -841,19 +934,25 @@ See attached JSON file
       return ok;
     }
 
-    scraperCopy.addEventListener('click', async () => {
-      const text = scraperMd.textContent;
-      try {
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          await navigator.clipboard.writeText(text);
-          flashCopied(scraperCopy);
-          return;
+    // Wire an icon-only copy button to copy a source element's text.
+    function wireCopy(btn, srcEl) {
+      btn.innerHTML = COPY_ICON;
+      btn.addEventListener('click', async () => {
+        const text = srcEl.textContent;
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(text);
+            flashCopied(btn);
+            return;
+          }
+        } catch (e) {
+          // Fall through to the legacy copy path on failure.
         }
-      } catch (e) {
-        // Fall through to the legacy copy path on failure.
-      }
-      if (legacyCopy(text)) flashCopied(scraperCopy);
-    });
+        if (legacyCopy(text)) flashCopied(btn);
+      });
+    }
+    wireCopy(scraperCopy, scraperMd);
+    wireCopy(researchCopy, researchMd);
 
     // --- Odds Input ----------------------------------------------------------
     function setOddsStatus(text, kind) {
