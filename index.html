@@ -386,28 +386,56 @@ See attached JSON file
     // Reduce a markets array per the filter rules (applied in order). Returns a
     // new array; never mutates the stored odds objects.
     function filterOddsMarkets(markets) {
-      const out = [];
+      // 1. Market whitelist (exact, case-sensitive) + 2. odds band — drop
+      //    selections outside [MIN_ODDS, MAX_ODDS]. NaN odds fail both
+      //    comparisons and are dropped.
+      const passed = [];
       for (const m of (markets || [])) {
-        // 1. Market whitelist — exact, case-sensitive match.
         if (!MARKET_WHITELIST.has(m.market)) continue;
-        // 2. Odds band — drop selections outside [MIN_ODDS, MAX_ODDS]. NaN odds
-        //    fail both comparisons and are dropped.
-        let selections = (m.selections || []).filter(s => {
+        const selections = (m.selections || []).filter(s => {
           const n = parseFloat(s.odds);
           return n >= MIN_ODDS && n <= MAX_ODDS;
         });
-        // 3. Goalscorer cap — keep the GOALSCORER_MAX shortest-priced.
+        passed.push({ market: m.market, selections });
+      }
+      // 3. De-duplicate by market name — the feed lists some markets twice. Keep
+      //    the copy with MORE selections; strict > means equal-length keeps the
+      //    first ("if identical, keep either"). Map preserves first-seen order.
+      const byName = new Map();
+      for (const m of passed) {
+        const prev = byName.get(m.market);
+        if (!prev || m.selections.length > prev.selections.length) byName.set(m.market, m);
+      }
+      // 4. Goalscorer cap (AFTER dedup) — keep the GOALSCORER_MAX shortest-priced.
+      // 5. Drop empty markets. 6. Add numeric implied_probability per selection.
+      const out = [];
+      for (const m of byName.values()) {
+        let selections = m.selections;
         if (m.market === GOALSCORER_MARKET && selections.length > GOALSCORER_MAX) {
           selections = selections
             .slice()
             .sort((a, b) => parseFloat(a.odds) - parseFloat(b.odds))
             .slice(0, GOALSCORER_MAX);
         }
-        // 4. Drop markets left with no selections.
         if (selections.length === 0) continue;
-        out.push({ market: m.market, selections });
+        out.push({
+          market: m.market,
+          selections: selections.map(s => ({
+            selection: s.selection,
+            odds: s.odds,
+            implied_probability: Math.round((1 / parseFloat(s.odds)) * 10000) / 10000,
+          })),
+        });
       }
       return out;
+    }
+
+    // Count markets and their total selections (for the filter audit trail).
+    function marketStats(markets) {
+      return {
+        markets: markets.length,
+        selections: markets.reduce((n, m) => n + ((m.selections || []).length), 0),
+      };
     }
 
     // Serialisable match detail for the per-round export payload. Includes the
@@ -442,12 +470,46 @@ See attached JSON file
     }
 
     function roundPayload(round, items, filter) {
-      return {
+      const matches = items.map(f => matchDetail(f, filter));
+      const payload = {
         gamblor_round: round.n,
         dates: round.label,
         match_count: items.length,
-        matches: items.map(f => matchDetail(f, filter)),
+        matches,
       };
+      // For the "Filtered Odds" export, record an audit trail: the parameters
+      // used plus before/after market & selection counts, overall and per match.
+      if (filter) {
+        const perMatch = [];
+        const total = { before: { markets: 0, selections: 0 }, after: { markets: 0, selections: 0 } };
+        items.forEach((f, i) => {
+          const key = matchedOddsKey(f);
+          if (!key) return;  // only games that had odds uploaded
+          const before = marketStats(oddsByKey.get(key).markets || []);
+          const after = marketStats(matches[i].odds.markets);
+          perMatch.push({
+            match: `${f.home_team} vs ${f.away_team}`,
+            markets: { before: before.markets, after: after.markets },
+            selections: { before: before.selections, after: after.selections },
+          });
+          total.before.markets += before.markets;
+          total.before.selections += before.selections;
+          total.after.markets += after.markets;
+          total.after.selections += after.selections;
+        });
+        payload.filter = {
+          parameters: {
+            market_whitelist: [...MARKET_WHITELIST],
+            min_odds: MIN_ODDS,
+            max_odds: MAX_ODDS,
+            goalscorer_max: GOALSCORER_MAX,
+          },
+          markets: { before: total.before.markets, after: total.after.markets },
+          selections: { before: total.before.selections, after: total.after.selections },
+          per_match: perMatch,
+        };
+      }
+      return payload;
     }
 
     function flashDownloaded(btn) {
