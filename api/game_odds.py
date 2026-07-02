@@ -102,19 +102,18 @@ def verify_token(token, now=None):
     now = int(now if now is not None else time.time())
     try:
         body, sig = token.split(".", 1)
-    except (ValueError, AttributeError):
-        return None
-    expected = _b64e(hmac.new(_auth_secret(), body.encode("ascii"), hashlib.sha256).digest())
-    if not hmac.compare_digest(sig, expected):
-        return None
-    try:
+        expected = _b64e(hmac.new(_auth_secret(), body.encode("ascii"), hashlib.sha256).digest())
+        if not isinstance(sig, str) or not isinstance(expected, str):
+            return None
+        if not hmac.compare_digest(sig, expected):
+            return None
         payload = json.loads(_b64d(body))
         if not isinstance(payload, dict):
             return None
         if int(payload.get("exp", 0)) < now:
             return None
         return payload
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, AttributeError):
         return None
 
 
@@ -311,7 +310,10 @@ class handler(BaseHTTPRequestHandler):
             qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             match_val = qs.get("match", [""])[0].strip()
             round_raw = qs.get("round", [""])[0].strip()
-            round_val = int(round_raw) if round_raw.isdigit() else None
+            try:
+                round_val = int(round_raw) if round_raw else None
+            except ValueError:
+                round_val = None
             if match_val:
                 response = get_odds(round_val, match_val)
             else:
