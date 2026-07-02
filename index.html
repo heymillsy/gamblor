@@ -382,35 +382,57 @@ See attached JSON file
     const MAX_ODDS = 6.00;
     const GOALSCORER_MARKET = 'Anytime Goalscorer';
     const GOALSCORER_MAX = 8;
+    // Markets whose outcomes fully partition the result space, so summing their
+    // implied probabilities yields a meaningful overround (bookmaker margin).
+    // Anytime Goalscorer is deliberately excluded (a one-of-many market).
+    const COMPLETE_MARKETS = new Set([
+      'Match Result', 'To Qualify', 'Both Teams to Score',
+      'Over/Under Total Goals 1.5', 'Over/Under Total Goals 2.5',
+      'Over/Under Total Goals 3.5',
+    ]);
+
+    // Sum of 1/odds over a market's numeric outcomes (the overround), rounded to
+    // 4 dp. Returns null if no outcome has usable odds.
+    function marketOverround(selections) {
+      let sum = 0, n = 0;
+      for (const s of (selections || [])) {
+        const v = parseFloat(s.odds);
+        if (v > 0) { sum += 1 / v; n++; }
+      }
+      return n ? Math.round(sum * 10000) / 10000 : null;
+    }
 
     // Reduce a markets array per the filter rules (applied in order). Returns a
     // new array; never mutates the stored odds objects.
     function filterOddsMarkets(markets) {
       // 1. Market whitelist (exact, case-sensitive) + 2. odds band — drop
       //    selections outside [MIN_ODDS, MAX_ODDS]. NaN odds fail both
-      //    comparisons and are dropped.
+      //    comparisons and are dropped. Keep the original outcomes too (`orig`),
+      //    which the overround is computed from (see step 6).
       const passed = [];
       for (const m of (markets || [])) {
         if (!MARKET_WHITELIST.has(m.market)) continue;
-        const selections = (m.selections || []).filter(s => {
+        const orig = m.selections || [];
+        const banded = orig.filter(s => {
           const n = parseFloat(s.odds);
           return n >= MIN_ODDS && n <= MAX_ODDS;
         });
-        passed.push({ market: m.market, selections });
+        passed.push({ market: m.market, orig, banded });
       }
       // 3. De-duplicate by market name — the feed lists some markets twice. Keep
-      //    the copy with MORE selections; strict > means equal-length keeps the
-      //    first ("if identical, keep either"). Map preserves first-seen order.
+      //    the copy with MORE banded selections; strict > means equal-length
+      //    keeps the first ("if identical, keep either"). Map preserves order.
       const byName = new Map();
       for (const m of passed) {
         const prev = byName.get(m.market);
-        if (!prev || m.selections.length > prev.selections.length) byName.set(m.market, m);
+        if (!prev || m.banded.length > prev.banded.length) byName.set(m.market, m);
       }
       // 4. Goalscorer cap (AFTER dedup) — keep the GOALSCORER_MAX shortest-priced.
-      // 5. Drop empty markets. 6. Add numeric implied_probability per selection.
+      // 5. Drop empty markets. 6. Add implied_probability per selection, and for
+      //    complete markets the overround/margin from ALL original outcomes.
       const out = [];
       for (const m of byName.values()) {
-        let selections = m.selections;
+        let selections = m.banded;
         if (m.market === GOALSCORER_MARKET && selections.length > GOALSCORER_MAX) {
           selections = selections
             .slice()
@@ -418,14 +440,20 @@ See attached JSON file
             .slice(0, GOALSCORER_MAX);
         }
         if (selections.length === 0) continue;
-        out.push({
-          market: m.market,
-          selections: selections.map(s => ({
-            selection: s.selection,
-            odds: s.odds,
-            implied_probability: Math.round((1 / parseFloat(s.odds)) * 10000) / 10000,
-          })),
-        });
+        const obj = { market: m.market };
+        if (COMPLETE_MARKETS.has(m.market)) {
+          const or = marketOverround(m.orig);
+          if (or !== null) {
+            obj.overround = or;
+            obj.margin_pct = Math.round((or - 1) * 10000) / 100;
+          }
+        }
+        obj.selections = selections.map(s => ({
+          selection: s.selection,
+          odds: s.odds,
+          implied_probability: Math.round((1 / parseFloat(s.odds)) * 10000) / 10000,
+        }));
+        out.push(obj);
       }
       return out;
     }
@@ -487,10 +515,16 @@ See attached JSON file
           if (!key) return;  // only games that had odds uploaded
           const before = marketStats(oddsByKey.get(key).markets || []);
           const after = marketStats(matches[i].odds.markets);
+          // Per-round margin readout: the complete markets' overrounds, taken
+          // from the market objects already built by filterOddsMarkets.
+          const overrounds = matches[i].odds.markets
+            .filter(m => m.overround !== undefined)
+            .map(m => ({ market: m.market, overround: m.overround, margin_pct: m.margin_pct }));
           perMatch.push({
             match: `${f.home_team} vs ${f.away_team}`,
             markets: { before: before.markets, after: after.markets },
             selections: { before: before.selections, after: after.selections },
+            overrounds,
           });
           total.before.markets += before.markets;
           total.before.selections += before.selections;
