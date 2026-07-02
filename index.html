@@ -37,10 +37,12 @@
     .tile.collapsed .tile-body { display: none; }
     .tile-range { color: #888; font-size: .8rem; margin-top: .15rem; }
     .tile-range .done { color: #16a34a; }
+    .dl-actions { flex: none; display: flex; gap: .4rem; margin-top: .1rem; }
     .dl-btn { flex: none; background: transparent; color: #888;
               border: 1px solid rgba(127,127,127,.35); border-radius: .5rem;
-              padding: .35rem; margin-top: .1rem; cursor: pointer; line-height: 0;
+              padding: .35rem .55rem; cursor: pointer; font-size: .8rem; gap: .35rem;
               display: inline-flex; align-items: center; justify-content: center; }
+    .dl-btn .dl-ic { display: inline-flex; line-height: 0; }
     .dl-btn:hover { color: inherit; background: rgba(127,127,127,.12); }
     .dl-btn.copied { color: #16a34a; border-color: #16a34a; }
 
@@ -368,9 +370,50 @@ See attached JSON file
       'aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>' +
       '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
 
+    // "Filtered Odds" export config. Keep only these exact (case-sensitive)
+    // market names, keep selections whose decimal odds fall within the band, and
+    // cap the goalscorer market to its shortest-priced selections.
+    const MARKET_WHITELIST = new Set([
+      'Match Result', 'To Qualify', 'Both Teams to Score',
+      'Over/Under Total Goals 1.5', 'Over/Under Total Goals 2.5',
+      'Over/Under Total Goals 3.5', 'Anytime Goalscorer',
+    ]);
+    const MIN_ODDS = 1.30;
+    const MAX_ODDS = 6.00;
+    const GOALSCORER_MARKET = 'Anytime Goalscorer';
+    const GOALSCORER_MAX = 8;
+
+    // Reduce a markets array per the filter rules (applied in order). Returns a
+    // new array; never mutates the stored odds objects.
+    function filterOddsMarkets(markets) {
+      const out = [];
+      for (const m of (markets || [])) {
+        // 1. Market whitelist — exact, case-sensitive match.
+        if (!MARKET_WHITELIST.has(m.market)) continue;
+        // 2. Odds band — drop selections outside [MIN_ODDS, MAX_ODDS]. NaN odds
+        //    fail both comparisons and are dropped.
+        let selections = (m.selections || []).filter(s => {
+          const n = parseFloat(s.odds);
+          return n >= MIN_ODDS && n <= MAX_ODDS;
+        });
+        // 3. Goalscorer cap — keep the GOALSCORER_MAX shortest-priced.
+        if (m.market === GOALSCORER_MARKET && selections.length > GOALSCORER_MAX) {
+          selections = selections
+            .slice()
+            .sort((a, b) => parseFloat(a.odds) - parseFloat(b.odds))
+            .slice(0, GOALSCORER_MAX);
+        }
+        // 4. Drop markets left with no selections.
+        if (selections.length === 0) continue;
+        out.push({ market: m.market, selections });
+      }
+      return out;
+    }
+
     // Serialisable match detail for the per-round export payload. Includes the
-    // game's saved odds (all markets) when odds have been added for it.
-    function matchDetail(f) {
+    // game's saved odds when odds have been added for it. When `filter` is given,
+    // the markets are reduced by it and market_count reflects the filtered count.
+    function matchDetail(f, filter) {
       const detail = {
         date: f.date,
         round: f.round,
@@ -387,29 +430,34 @@ See attached JSON file
       const key = matchedOddsKey(f);
       if (key) {
         const o = oddsByKey.get(key);
+        const markets = filter ? filter(o.markets || []) : (o.markets || []);
         detail.odds = {
           source: o.source,
           scraped_at: o.scraped_at,
-          market_count: o.market_count,
-          markets: o.markets || [],
+          market_count: filter ? markets.length : o.market_count,
+          markets,
         };
       }
       return detail;
     }
 
-    function roundPayload(round, items) {
+    function roundPayload(round, items, filter) {
       return {
         gamblor_round: round.n,
         dates: round.label,
         match_count: items.length,
-        matches: items.map(matchDetail),
+        matches: items.map(f => matchDetail(f, filter)),
       };
     }
 
     function flashDownloaded(btn) {
+      const ic = btn.querySelector('.dl-ic');
       btn.classList.add('copied');
-      btn.innerHTML = CHECK_ICON;
-      setTimeout(() => { btn.classList.remove('copied'); btn.innerHTML = DOWNLOAD_ICON; }, 1200);
+      if (ic) ic.innerHTML = CHECK_ICON;
+      setTimeout(() => {
+        btn.classList.remove('copied');
+        if (ic) ic.innerHTML = DOWNLOAD_ICON;
+      }, 1200);
     }
 
     function downloadJSON(filename, text) {
@@ -425,16 +473,16 @@ See attached JSON file
       setTimeout(() => URL.revokeObjectURL(url), 100);
     }
 
-    function makeDownloadButton(round, items) {
+    function makeDownloadButton(round, items, { label, filename, filter } = {}) {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'dl-btn';
-      btn.title = `Download Gamblor Round ${round.n} games (with odds) as JSON`;
+      btn.title = `Download Gamblor Round ${round.n} ${label} as JSON`;
       btn.setAttribute('aria-label', btn.title);
-      btn.innerHTML = DOWNLOAD_ICON;
+      btn.innerHTML = `<span class="dl-ic">${DOWNLOAD_ICON}</span><span class="dl-tx">${esc(label)}</span>`;
       btn.addEventListener('click', () => {
-        const text = JSON.stringify(roundPayload(round, items), null, 2);
-        downloadJSON(`gamblor-round-${round.n}.json`, text);
+        const text = JSON.stringify(roundPayload(round, items, filter), null, 2);
+        downloadJSON(filename, text);
         flashDownloaded(btn);
       });
       return btn;
@@ -574,7 +622,23 @@ See attached JSON file
            </h2>
            <div class="tile-range">${esc(round.label)} · ${items.length} ${items.length === 1 ? 'match' : 'matches'}${complete ? ' · <span class="done">✓ complete</span>' : ''}</div>`;
         head.appendChild(heading);
-        head.appendChild(makeDownloadButton(round, items));
+
+        // A round with any uploaded odds gets an "All Odds" (full) export plus a
+        // "Filtered Odds" export; a round with no odds just gets a "Games" export.
+        const hasOdds = items.some(f => matchedOddsKey(f));
+        const actions = document.createElement('div');
+        actions.className = 'dl-actions';
+        if (hasOdds) {
+          actions.appendChild(makeDownloadButton(round, items,
+            { label: 'All Odds', filename: `gamblor-round-${round.n}.json` }));
+          actions.appendChild(makeDownloadButton(round, items,
+            { label: 'Filtered Odds', filename: `gamblor-round-${round.n}-filtered.json`,
+              filter: filterOddsMarkets }));
+        } else {
+          actions.appendChild(makeDownloadButton(round, items,
+            { label: 'Games', filename: `gamblor-round-${round.n}.json` }));
+        }
+        head.appendChild(actions);
         tile.appendChild(head);
 
         const body = document.createElement('div');
