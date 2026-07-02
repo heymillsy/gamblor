@@ -595,7 +595,15 @@ balanced objective:
       return detail;
     }
 
+    // A fixture still awaiting a team ("TBD" in the UI) has a null/blank home or
+    // away side. These are excluded from every download so exports only contain
+    // games with both opponents confirmed.
+    function hasBothTeams(f) {
+      return Boolean(f.home_team) && Boolean(f.away_team);
+    }
+
     function roundPayload(round, items, filter) {
+      items = items.filter(hasBothTeams);
       const matches = items.map(f => matchDetail(f, filter));
       const payload = {
         gamblor_round: round.n,
