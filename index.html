@@ -237,7 +237,8 @@
         <p class="filters-label">Markets to include</p>
         <p class="filters-hint">Grouped into categories — tick a group heading to
           include every market in it, or expand a group for individual control.
-          Only checked markets survive the filter.</p>
+          Team names are stripped (so “Goalkeeper Saves” applies to any round),
+          and only checked markets survive the filter.</p>
         <div id="filter-markets" class="filter-markets"></div>
 
         <p id="filters-status"></p>
@@ -652,6 +653,34 @@ Confirm each item. If any item fails, keep working and do not end your turn.
     }
     let filterConfig = loadFilterConfig();
 
+    function escapeRe(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+    // Strip a match's team names out of a market name so team-specific markets
+    // collapse to a generic label that applies to any round — e.g.
+    // "Spain Goalkeeper Saves" and "Austria Goalkeeper Saves" both become
+    // "Goalkeeper Saves". Falls back to the trimmed original if stripping would
+    // leave nothing. Used for BOTH the whitelist UI and the whitelist match, so
+    // they always agree.
+    function genericMarketName(name, homeTeam, awayTeam) {
+      let out = String(name);
+      for (const t of [homeTeam, awayTeam]) {
+        if (t) out = out.replace(new RegExp(escapeRe(t), 'gi'), ' ');
+      }
+      out = out.replace(/\s+/g, ' ').trim().replace(/^[-/:,]+\s*|\s*[-/:,]+$/g, '').trim();
+      return out || String(name).trim();
+    }
+
+    // Team names as they appear in an odds key ("<round>|<home> vs <away>").
+    // These are the SCRAPED spellings, which is what the market names use — so
+    // they strip correctly even when the fixture spells a team differently.
+    function teamsFromOddsKey(key) {
+      const s = String(key);
+      const rest = s.slice(s.indexOf('|') + 1);
+      const i = rest.indexOf(' vs ');
+      return i < 0 ? { home: '', away: '' }
+                   : { home: rest.slice(0, i), away: rest.slice(i + 4) };
+    }
+
     // Sum of 1/odds over a market's numeric outcomes (the overround), rounded to
     // 4 dp. Returns null if no outcome has usable odds.
     function marketOverround(selections) {
@@ -665,26 +694,32 @@ Confirm each item. If any item fails, keep working and do not end your turn.
 
     // Reduce a markets array per the filter rules (applied in order). Returns a
     // new array; never mutates the stored odds objects.
-    function filterOddsMarkets(markets) {
-      // 1. Market whitelist (exact, case-sensitive) + 2. odds band — drop
-      //    selections outside [minOdds, maxOdds]. NaN odds fail both
-      //    comparisons and are dropped. Keep the original outcomes too (`orig`),
-      //    which the overround is computed from (see step 6).
+    function filterOddsMarkets(markets, teams) {
+      // 1. Market whitelist + 2. odds band. The whitelist holds generic
+      //    (team-stripped) names, so each market is matched by its generic name
+      //    while the output keeps the original (team-specific) name. Selections
+      //    outside [minOdds, maxOdds] are dropped; NaN odds fail both comparisons
+      //    and are dropped. Keep the original outcomes too (`orig`), which the
+      //    overround is computed from (see step 6).
+      const home = teams && teams.home, away = teams && teams.away;
       const whitelist = new Set(filterConfig.marketWhitelist);
       const minOdds = filterConfig.minOdds, maxOdds = filterConfig.maxOdds;
       const passed = [];
       for (const m of (markets || [])) {
-        if (!whitelist.has(m.market)) continue;
+        const generic = genericMarketName(m.market, home, away);
+        if (!whitelist.has(generic)) continue;
         const orig = m.selections || [];
         const banded = orig.filter(s => {
           const n = parseFloat(s.odds);
           return n >= minOdds && n <= maxOdds;
         });
-        passed.push({ market: m.market, orig, banded });
+        passed.push({ market: m.market, generic, orig, banded });
       }
-      // 3. De-duplicate by market name — the feed lists some markets twice. Keep
-      //    the copy with MORE banded selections; strict > means equal-length
-      //    keeps the first ("if identical, keep either"). Map preserves order.
+      // 3. De-duplicate by original market name — the feed lists some markets
+      //    twice. Keep the copy with MORE banded selections; strict > means
+      //    equal-length keeps the first ("if identical, keep either"). Map
+      //    preserves order. Different teams' variants keep distinct names, so
+      //    they are not merged.
       const byName = new Map();
       for (const m of passed) {
         const prev = byName.get(m.market);
@@ -693,10 +728,11 @@ Confirm each item. If any item fails, keep working and do not end your turn.
       // 4. Goalscorer cap (AFTER dedup) — keep goalscorerMax shortest-priced.
       // 5. Drop empty markets. 6. Add implied_probability per selection, and for
       //    complete markets the overround/margin from ALL original outcomes.
+      //    Goalscorer/complete checks use the generic name.
       const out = [];
       for (const m of byName.values()) {
         let selections = m.banded;
-        if (m.market === GOALSCORER_MARKET && selections.length > filterConfig.goalscorerMax) {
+        if (m.generic === GOALSCORER_MARKET && selections.length > filterConfig.goalscorerMax) {
           selections = selections
             .slice()
             .sort((a, b) => parseFloat(a.odds) - parseFloat(b.odds))
@@ -704,7 +740,7 @@ Confirm each item. If any item fails, keep working and do not end your turn.
         }
         if (selections.length === 0) continue;
         const obj = { market: m.market };
-        if (COMPLETE_MARKETS.has(m.market)) {
+        if (COMPLETE_MARKETS.has(m.generic)) {
           const or = marketOverround(m.orig);
           if (or !== null) {
             obj.overround = or;
@@ -749,7 +785,9 @@ Confirm each item. If any item fails, keep working and do not end your turn.
       const key = matchedOddsKey(f);
       if (key) {
         const o = oddsByKey.get(key);
-        const markets = filter ? filter(o.markets || []) : (o.markets || []);
+        const markets = filter
+          ? filter(o.markets || [], teamsFromOddsKey(key))
+          : (o.markets || []);
         detail.odds = {
           source: o.source,
           scraped_at: o.scraped_at,
@@ -1341,15 +1379,20 @@ Confirm each item. If any item fails, keep working and do not end your turn.
     }
 
     // Candidate markets for the whitelist UI: the default markets first (canonical
-    // order), then any extra market names discovered in the uploaded odds or in
-    // the current whitelist, de-duplicated and sorted.
+    // order), then any extra GENERIC market names discovered in the uploaded odds
+    // or in the current whitelist, de-duplicated and sorted. Team names are
+    // stripped (via the odds key's spellings) so a market like "Goalkeeper Saves"
+    // appears once, not once per team per match.
     function candidateMarkets() {
       const defaults = FILTER_DEFAULTS.marketWhitelist;
       const seen = new Set(defaults);
       const extras = [];
       const add = name => { if (name && !seen.has(name)) { seen.add(name); extras.push(name); } };
-      for (const g of oddsByKey.values())
-        for (const m of (g.markets || [])) add(m && m.market);
+      for (const [key, g] of oddsByKey) {
+        const t = teamsFromOddsKey(key);
+        for (const m of (g.markets || []))
+          if (m && m.market) add(genericMarketName(m.market, t.home, t.away));
+      }
       for (const name of filterConfig.marketWhitelist) add(name);
       extras.sort();
       return [...defaults, ...extras];
@@ -1366,7 +1409,7 @@ Confirm each item. If any item fails, keep working and do not end your turn.
       ['Halves', /half|ht\/ft|1st h|2nd h/i],
       ['Handicaps', /handicap|spread/i],
       ['Player Props', /player|assist|\bshots?\b|tackle|offside/i],
-      ['Goals', /goal|over\/under|\bover\b|\bunder\b|both teams|btts|o\/u|odd\/even/i],
+      ['Goals', /\bgoals?\b|over\/under|\bover\b|\bunder\b|both teams|btts|o\/u|odd\/even/i],
       ['Match / Result', /result|qualify|winner|\bwin\b|double chance|draw|1x2/i],
     ];
     const MARKET_GROUP_ORDER = [
