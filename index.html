@@ -17,7 +17,23 @@
     button.secondary { background: rgba(127,127,127,.2); color: inherit; }
     #msg { color: #888; font-size: .9rem; min-width: 0; }
     /* Keep Refresh on the same line as #msg, pinned to the right. */
-    #refresh { flex: 0 0 auto; margin-left: auto; white-space: nowrap; }
+    #refresh { flex: 0 0 auto; margin-left: auto; white-space: nowrap;
+               display: inline-flex; align-items: center; gap: .45rem; }
+    #refresh[disabled] { opacity: .65; cursor: default; }
+    /* Spinner shows only while refreshing; the ↻ glyph shows otherwise. */
+    #refresh .refresh-ic { display: inline-block; line-height: 1; }
+    #refresh .spinner { display: none; width: .85em; height: .85em; border-radius: 50%;
+                        border: 2px solid currentColor; border-top-color: transparent; }
+    #refresh.loading .refresh-ic { display: none; }
+    #refresh.loading .spinner { display: inline-block; animation: spin .7s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { #refresh.loading .spinner { animation-duration: 1.6s; } }
+    /* Refresh result line (success / error / info) below the bar. */
+    #refresh-status { font-size: .85rem; margin: -.4rem 0 .6rem; }
+    #refresh-status[hidden] { display: none; }
+    #refresh-status.ok  { color: #16a34a; }
+    #refresh-status.err { color: #dc2626; }
+    #refresh-status.info { color: #888; }
     .hidden { display: none; }
 
     /* Gamblor Round tiles */
@@ -144,8 +160,13 @@
     <section id="games-tab" role="tabpanel">
       <div class="bar">
         <span id="msg">Loading…</span>
-        <button id="refresh" class="secondary" type="button">↻ Refresh</button>
+        <button id="refresh" class="secondary" type="button" aria-label="Refresh fixtures from source">
+          <span class="refresh-ic" aria-hidden="true">↻</span>
+          <span class="spinner" aria-hidden="true"></span>
+          <span class="refresh-label">Refresh</span>
+        </button>
       </div>
+      <p id="refresh-status" role="status" aria-live="polite" hidden></p>
       <div id="list"></div>
     </section>
 
@@ -406,6 +427,8 @@ Confirm each item. If any item fails, keep working and do not end your turn.
     const msg = document.getElementById('msg');
     const list = document.getElementById('list');
     const refreshBtn = document.getElementById('refresh');
+    const refreshStatus = document.getElementById('refresh-status');
+    const refreshLabel = refreshBtn.querySelector('.refresh-label');
 
     // Tabs + Odds Input
     const tabGames = document.getElementById('tab-games');
@@ -439,7 +462,7 @@ Confirm each item. If any item fails, keep working and do not end your turn.
     function showApp() {
       loginView.classList.add('hidden');
       appView.classList.remove('hidden');
-      load();
+      loadSafe();
     }
 
     // Returns true (valid), false (definitively invalid → 401), or
@@ -947,13 +970,37 @@ Confirm each item. If any item fails, keep working and do not end your turn.
       list.appendChild(fragment);
     }
 
+    // Append a unique query param so a "fresh" read gets a distinct URL and can't
+    // be served from Vercel's edge cache (the read is sent with s-maxage=300).
+    // Without this, a re-read right after a refresh can return a pre-refresh copy,
+    // which is why the "updated…" time sometimes appeared not to move.
+    function bust(url) {
+      return url + (url.includes('?') ? '&' : '?') + '_=' + Date.now();
+    }
+
+    // fetch() with an abort timeout so a hung request fails loudly instead of
+    // leaving the button spinning forever.
+    async function fetchWithTimeout(url, opts = {}, ms = 45000) {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), ms);
+      try {
+        return await fetch(url, { ...opts, signal: ctrl.signal });
+      } catch (e) {
+        if (e && e.name === 'AbortError') throw new Error('the request timed out — please try again');
+        throw e;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
     // Fetch saved odds (with markets) as a Map keyed by match_key. Never throws —
     // a failure just means no "View Odds" buttons and no odds in the export.
     async function loadOdds(forceRefresh) {
       const map = new Map();
       try {
+        const url = forceRefresh ? bust('/api/game_odds?include=payload') : '/api/game_odds?include=payload';
         const opts = forceRefresh ? { cache: 'no-store' } : undefined;
-        const r = await fetch('/api/game_odds?include=payload', opts);
+        const r = await fetch(url, opts);
         const j = await r.json();
         if (j && j.ok && Array.isArray(j.games)) {
           for (const g of j.games) {
@@ -965,61 +1012,105 @@ Confirm each item. If any item fails, keep working and do not end your turn.
     }
 
     // Trigger a live upstream re-fetch (openfootball -> Turso) via POST /api/wc,
-    // authorised by the login token. Returns the server's JSON summary; throws on
-    // any auth/network/source failure so the caller can surface it.
+    // authorised by the login token. Returns the server's JSON summary
+    // ({ok, stored, fetched, updated_at} or {ok, skipped, reason}); throws with a
+    // human-readable message on any auth/network/source failure.
     async function refreshFromSource() {
-      const r = await fetch('/api/wc', {
+      const r = await fetchWithTimeout('/api/wc', {
         method: 'POST',
         headers: { 'Authorization': 'Bearer ' + getToken() },
         cache: 'no-store',
       });
       const j = (await r.json().catch(() => ({}))) || {};
-      if (!r.ok || !j.ok) throw new Error(j.error || `refresh failed (HTTP ${r.status})`);
+      if (r.status === 401) throw new Error('your session has expired — log out and back in');
+      if (!r.ok || !j.ok) throw new Error(j.error || `the server returned HTTP ${r.status}`);
       return j;
     }
 
-    // `forceRefresh` sends `cache: 'no-store'` so a reload bypasses the CDN cache
-    // and reads the freshest stored data (the initial page load leaves it false to
-    // use the normal `s-maxage=300` cache). `fetchLatest` additionally does a live
-    // upstream pull first, so the Refresh button gets brand-new source data — not
-    // just whatever the daily cron last stored. Fixtures still show "TBD" while the
-    // source itself hasn't decided those teams yet (knockout placeholders).
-    async function load(forceRefresh = false, fetchLatest = false) {
-      msg.textContent = fetchLatest ? 'Fetching latest fixtures…' : 'Loading fixtures…';
+    // Read stored fixtures + odds and render them. `forceRefresh` cache-busts the
+    // reads so they hit the origin (used right after a live refresh). Does NOT own
+    // the Refresh button's spinner — that is managed by refreshFixtures().
+    async function load(forceRefresh = false) {
+      msg.textContent = 'Loading fixtures…';
       list.innerHTML = '';
-      refreshBtn.disabled = true;
-      // An upstream pull failure is non-fatal: we still show the stored fixtures
-      // and just note the problem, rather than blanking the list.
-      let warning = '';
+      const wcUrl = forceRefresh ? bust('/api/wc') : '/api/wc';
+      const opts = forceRefresh ? { cache: 'no-store' } : undefined;
+      const [r, odds] = await Promise.all([
+        fetchWithTimeout(wcUrl, opts), loadOdds(forceRefresh)]);
+      oddsByKey = odds;
+      const j = await r.json();
+      if (!j.ok) throw new Error(j.error || 'failed to load fixtures');
+      if (!j.fixtures.length) {
+        msg.textContent = 'No fixtures stored yet — the daily update will populate them.';
+        return null;
+      }
+      const upd = j.updated_at ? new Date(j.updated_at) : null;
+      msg.textContent = `${j.count} matches` +
+        (upd && !isNaN(upd) ? ` · updated ${upd.toLocaleString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'})}` : '');
+      render(j.fixtures);
+      return j;
+    }
+
+    // Initial page load / post-save reload: read stored data, surface any error in
+    // the status line, and never let it throw out.
+    async function loadSafe(forceRefresh = false) {
       try {
-        if (fetchLatest) {
-          try { await refreshFromSource(); }
-          catch (e) { warning = ` · refresh failed: ${e.message}`; }
-        }
-        const opts = (forceRefresh || fetchLatest) ? { cache: 'no-store' } : undefined;
-        const [r, odds] = await Promise.all([
-          fetch('/api/wc', opts), loadOdds(forceRefresh || fetchLatest)]);
-        oddsByKey = odds;
-        const j = await r.json();
-        if (!j.ok) throw new Error(j.error || 'failed');
-        if (!j.fixtures.length) {
-          msg.textContent = 'No fixtures stored yet — the daily update will populate them.';
-          return;
-        }
-        const upd = j.updated_at ? new Date(j.updated_at) : null;
-        msg.textContent = `${j.count} matches` +
-          (upd && !isNaN(upd) ? ` · updated ${upd.toLocaleString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'})}` : '') +
-          warning;
-        render(j.fixtures);
+        return await load(forceRefresh);
       } catch (e) {
         msg.textContent = 'Error: ' + e.message;
-      } finally {
-        refreshBtn.disabled = false;
+        return null;
       }
     }
 
-    // The Refresh button pulls fresh data from the source, then re-renders.
-    refreshBtn.addEventListener('click', () => load(true, true));
+    // --- Refresh button: spinner + status feedback ---------------------------
+    function setRefreshing(on) {
+      refreshBtn.disabled = on;
+      refreshBtn.classList.toggle('loading', on);
+      if (refreshLabel) refreshLabel.textContent = on ? 'Refreshing…' : 'Refresh';
+    }
+
+    function setRefreshStatus(text, kind) {
+      if (!text) { refreshStatus.hidden = true; refreshStatus.textContent = ''; return; }
+      refreshStatus.hidden = false;
+      refreshStatus.className = kind || '';
+      refreshStatus.textContent = text;
+    }
+
+    // The Refresh button: always calls the upstream API, then re-reads and renders,
+    // with explicit spinner + success / error feedback. Success is judged by the
+    // API call itself, so a hiccup on the follow-up read can't mask a real refresh.
+    let refreshing = false;
+    async function refreshFixtures() {
+      if (refreshing) return;          // ignore repeat taps while in flight
+      refreshing = true;
+      setRefreshing(true);
+      setRefreshStatus('Fetching the latest fixtures from the source…', 'info');
+      try {
+        let res;
+        try {
+          res = await refreshFromSource();          // the live API call
+        } catch (e) {
+          await loadSafe(true);                     // still show stored data
+          setRefreshStatus('✕ Refresh failed: ' + e.message +
+            '. Showing the last saved data.', 'err');
+          return;
+        }
+        const j = await loadSafe(true);             // cache-busted re-read + render
+        if (res.skipped) {
+          setRefreshStatus('Source refresh skipped: ' +
+            (res.reason || 'the tournament is over.'), 'info');
+        } else {
+          const n = res.stored != null ? res.stored
+                  : (res.fetched != null ? res.fetched : (j && j.count));
+          setRefreshStatus('✓ Updated' + (n != null ? ` — ${n} matches synced` : '') +
+            ' just now.', 'ok');
+        }
+      } finally {
+        setRefreshing(false);
+        refreshing = false;
+      }
+    }
+    refreshBtn.addEventListener('click', refreshFixtures);
 
     // --- Tabs ----------------------------------------------------------------
     // Each tab: its button, its panel, and the name used to select it.
@@ -1130,7 +1221,7 @@ Confirm each item. If any item fails, keep working and do not end your turn.
         const rounds = Array.isArray(j.rounds) ? j.rounds.join(', ') : '';
         setOddsStatus(`Saved ${j.saved} ${j.saved === 1 ? 'match' : 'matches'}` +
                       (rounds ? ` (Gamblor Round ${rounds}).` : '.'), 'ok');
-        await load(true);  // force-refresh odds keys + fixtures so "View Odds" appears
+        await loadSafe(true);  // force-refresh odds keys + fixtures so "View Odds" appears
       } catch (e) {
         setOddsStatus('Error: ' + e.message, 'err');
       } finally {
