@@ -109,6 +109,25 @@
     #odds-status.ok { color: #16a34a; }
     #odds-status.err { color: #dc2626; }
 
+    /* Odds Filters tab */
+    .filters { margin-top: .8rem; }
+    .filters-grid { display: grid; grid-template-columns: 1fr auto; gap: .55rem .8rem;
+          align-items: center; max-width: 440px; margin: 1.1rem 0; }
+    .filters-grid label { font-weight: 600; font-size: .9rem; }
+    .filters-grid input { width: 6.5rem; box-sizing: border-box; padding: .45rem .55rem;
+          font-size: .95rem; border: 1px solid rgba(127,127,127,.45); border-radius: .5rem;
+          background: transparent; color: inherit; justify-self: end; }
+    .filters-label { font-weight: 600; font-size: .9rem; margin: 1.3rem 0 .4rem; }
+    .filters-hint { color: #888; font-size: .8rem; margin: 0 0 .5rem; }
+    .filter-markets { display: flex; flex-direction: column; gap: .4rem; }
+    .filter-markets label { display: flex; align-items: center; gap: .5rem; font-size: .9rem;
+          cursor: pointer; }
+    .filter-markets input { width: 1rem; height: 1rem; flex: none; }
+    .filters-actions { display: flex; gap: .5rem; margin-top: 1.1rem; }
+    #filters-status { font-size: .9rem; margin: .8rem 0 0; min-height: 1.2em; color: #888; }
+    #filters-status.ok { color: #16a34a; }
+    #filters-status.err { color: #dc2626; }
+
     /* Prompt tabs (Chrome Scraper, Research) */
     .scraper { margin-top: .8rem; }
     .scraper-head { display: flex; align-items: flex-start; justify-content: space-between;
@@ -151,6 +170,7 @@
     <div class="tabs" role="tablist">
       <button id="tab-games" class="tab active" role="tab" aria-selected="true">Games</button>
       <button id="tab-odds" class="tab" role="tab" aria-selected="false">Odds Input</button>
+      <button id="tab-filters" class="tab" role="tab" aria-selected="false">Odds Filters</button>
       <button id="tab-scraper" class="tab" role="tab" aria-selected="false">Chrome Scraper</button>
       <button id="tab-research" class="tab" role="tab" aria-selected="false">Research</button>
       <button id="logout" class="secondary tab-logout">Log out</button>
@@ -182,6 +202,34 @@
                   placeholder='{ "gamblor_round": 7, "matches": [ … ] }'></textarea>
         <p id="odds-status"></p>
         <button id="odds-save" type="button">Save odds</button>
+      </div>
+    </section>
+
+    <!-- Odds Filters tab -->
+    <section id="filters-tab" class="hidden" role="tabpanel">
+      <div class="filters">
+        <p class="sub">Tune the rules used by each round's “Filtered Odds” download.
+          Changes are saved in this browser and apply to every filtered export.</p>
+
+        <div class="filters-grid">
+          <label for="filter-min">Min odds</label>
+          <input id="filter-min" type="number" min="1" step="0.01" inputmode="decimal" />
+          <label for="filter-max">Max odds</label>
+          <input id="filter-max" type="number" min="1" step="0.01" inputmode="decimal" />
+          <label for="filter-gsmax">Anytime Goalscorer — max selections</label>
+          <input id="filter-gsmax" type="number" min="1" step="1" inputmode="numeric" />
+        </div>
+
+        <p class="filters-label">Markets to include</p>
+        <p class="filters-hint">The default markets plus any others found in your
+          uploaded odds. Only checked markets survive the filter.</p>
+        <div id="filter-markets" class="filter-markets"></div>
+
+        <p id="filters-status"></p>
+        <div class="filters-actions">
+          <button id="filters-save" type="button">Save filters</button>
+          <button id="filters-reset" class="secondary" type="button">Reset to defaults</button>
+        </div>
       </div>
     </section>
 
@@ -447,6 +495,15 @@ Confirm each item. If any item fails, keep working and do not end your turn.
     const oddsText = document.getElementById('odds-text');
     const oddsSave = document.getElementById('odds-save');
     const oddsStatus = document.getElementById('odds-status');
+    const tabFilters = document.getElementById('tab-filters');
+    const filtersTab = document.getElementById('filters-tab');
+    const filterMin = document.getElementById('filter-min');
+    const filterMax = document.getElementById('filter-max');
+    const filterGsMax = document.getElementById('filter-gsmax');
+    const filterMarkets = document.getElementById('filter-markets');
+    const filtersSave = document.getElementById('filters-save');
+    const filtersReset = document.getElementById('filters-reset');
+    const filtersStatus = document.getElementById('filters-status');
 
     // Saved odds, keyed by "<round>|<home> vs <away>" -> { markets, source, ... }.
     let oddsByKey = new Map();
@@ -533,26 +590,52 @@ Confirm each item. If any item fails, keep working and do not end your turn.
       'aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>' +
       '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
 
-    // "Filtered Odds" export config. Keep only these exact (case-sensitive)
+    // "Filtered Odds" export config. Keep only whitelisted (exact, case-sensitive)
     // market names, keep selections whose decimal odds fall within the band, and
-    // cap the goalscorer market to its shortest-priced selections.
-    const MARKET_WHITELIST = new Set([
-      'Match Result', 'To Qualify', 'Both Teams to Score',
-      'Over/Under Total Goals 1.5', 'Over/Under Total Goals 2.5',
-      'Over/Under Total Goals 3.5', 'Anytime Goalscorer',
-    ]);
-    const MIN_ODDS = 1.30;
-    const MAX_ODDS = 6.00;
+    // cap the goalscorer market to its shortest-priced selections. These defaults
+    // are user-adjustable from the "Odds Filters" tab; the live values live in
+    // `filterConfig` and are persisted to localStorage (see loadFilterConfig).
+    const FILTER_DEFAULTS = {
+      marketWhitelist: [
+        'Match Result', 'To Qualify', 'Both Teams to Score',
+        'Over/Under Total Goals 1.5', 'Over/Under Total Goals 2.5',
+        'Over/Under Total Goals 3.5', 'Anytime Goalscorer',
+      ],
+      minOdds: 1.30,
+      maxOdds: 6.00,
+      goalscorerMax: 8,
+    };
     const GOALSCORER_MARKET = 'Anytime Goalscorer';
-    const GOALSCORER_MAX = 8;
     // Markets whose outcomes fully partition the result space, so summing their
     // implied probabilities yields a meaningful overround (bookmaker margin).
-    // Anytime Goalscorer is deliberately excluded (a one-of-many market).
+    // Anytime Goalscorer is deliberately excluded (a one-of-many market). Only
+    // these known markets get an overround; user-added markets never do.
     const COMPLETE_MARKETS = new Set([
       'Match Result', 'To Qualify', 'Both Teams to Score',
       'Over/Under Total Goals 1.5', 'Over/Under Total Goals 2.5',
       'Over/Under Total Goals 3.5',
     ]);
+
+    const FILTERS_KEY = 'gamblor_odds_filters';
+    // Live filter config, seeded from localStorage falling back to the defaults.
+    // Sanitised field-by-field so a corrupt or partial stored value can never
+    // break the export.
+    function loadFilterConfig() {
+      const d = FILTER_DEFAULTS;
+      let p = {};
+      try { p = JSON.parse(localStorage.getItem(FILTERS_KEY)) || {}; }
+      catch (e) { p = {}; }
+      const wl = Array.isArray(p.marketWhitelist)
+        ? p.marketWhitelist.filter(s => typeof s === 'string') : null;
+      return {
+        marketWhitelist: wl ? wl : d.marketWhitelist.slice(),
+        minOdds: Number.isFinite(p.minOdds) && p.minOdds > 0 ? p.minOdds : d.minOdds,
+        maxOdds: Number.isFinite(p.maxOdds) && p.maxOdds > 0 ? p.maxOdds : d.maxOdds,
+        goalscorerMax: Number.isInteger(p.goalscorerMax) && p.goalscorerMax > 0
+          ? p.goalscorerMax : d.goalscorerMax,
+      };
+    }
+    let filterConfig = loadFilterConfig();
 
     // Sum of 1/odds over a market's numeric outcomes (the overround), rounded to
     // 4 dp. Returns null if no outcome has usable odds.
@@ -569,16 +652,18 @@ Confirm each item. If any item fails, keep working and do not end your turn.
     // new array; never mutates the stored odds objects.
     function filterOddsMarkets(markets) {
       // 1. Market whitelist (exact, case-sensitive) + 2. odds band — drop
-      //    selections outside [MIN_ODDS, MAX_ODDS]. NaN odds fail both
+      //    selections outside [minOdds, maxOdds]. NaN odds fail both
       //    comparisons and are dropped. Keep the original outcomes too (`orig`),
       //    which the overround is computed from (see step 6).
+      const whitelist = new Set(filterConfig.marketWhitelist);
+      const minOdds = filterConfig.minOdds, maxOdds = filterConfig.maxOdds;
       const passed = [];
       for (const m of (markets || [])) {
-        if (!MARKET_WHITELIST.has(m.market)) continue;
+        if (!whitelist.has(m.market)) continue;
         const orig = m.selections || [];
         const banded = orig.filter(s => {
           const n = parseFloat(s.odds);
-          return n >= MIN_ODDS && n <= MAX_ODDS;
+          return n >= minOdds && n <= maxOdds;
         });
         passed.push({ market: m.market, orig, banded });
       }
@@ -590,17 +675,17 @@ Confirm each item. If any item fails, keep working and do not end your turn.
         const prev = byName.get(m.market);
         if (!prev || m.banded.length > prev.banded.length) byName.set(m.market, m);
       }
-      // 4. Goalscorer cap (AFTER dedup) — keep the GOALSCORER_MAX shortest-priced.
+      // 4. Goalscorer cap (AFTER dedup) — keep goalscorerMax shortest-priced.
       // 5. Drop empty markets. 6. Add implied_probability per selection, and for
       //    complete markets the overround/margin from ALL original outcomes.
       const out = [];
       for (const m of byName.values()) {
         let selections = m.banded;
-        if (m.market === GOALSCORER_MARKET && selections.length > GOALSCORER_MAX) {
+        if (m.market === GOALSCORER_MARKET && selections.length > filterConfig.goalscorerMax) {
           selections = selections
             .slice()
             .sort((a, b) => parseFloat(a.odds) - parseFloat(b.odds))
-            .slice(0, GOALSCORER_MAX);
+            .slice(0, filterConfig.goalscorerMax);
         }
         if (selections.length === 0) continue;
         const obj = { market: m.market };
@@ -704,10 +789,10 @@ Confirm each item. If any item fails, keep working and do not end your turn.
         });
         payload.filter = {
           parameters: {
-            market_whitelist: [...MARKET_WHITELIST],
-            min_odds: MIN_ODDS,
-            max_odds: MAX_ODDS,
-            goalscorer_max: GOALSCORER_MAX,
+            market_whitelist: filterConfig.marketWhitelist.slice(),
+            min_odds: filterConfig.minOdds,
+            max_odds: filterConfig.maxOdds,
+            goalscorer_max: filterConfig.goalscorerMax,
           },
           markets: { before: total.before.markets, after: total.after.markets },
           selections: { before: total.before.selections, after: total.after.selections },
@@ -1117,6 +1202,7 @@ Confirm each item. If any item fails, keep working and do not end your turn.
     const TABS = [
       { name: 'games',   btn: tabGames,   panel: gamesTab },
       { name: 'odds',    btn: tabOdds,    panel: oddsTab },
+      { name: 'filters', btn: tabFilters, panel: filtersTab },
       { name: 'scraper', btn: tabScraper, panel: scraperTab },
       { name: 'research', btn: tabResearch, panel: researchTab },
     ];
@@ -1127,6 +1213,9 @@ Confirm each item. If any item fails, keep working and do not end your turn.
         t.btn.setAttribute('aria-selected', String(on));
         t.panel.classList.toggle('hidden', !on);
       }
+      // Re-sync the filters form to saved config on entry, so newly-uploaded
+      // markets appear as options and unsaved edits are discarded.
+      if (which === 'filters') fillFilterForm();
     }
     for (const t of TABS) t.btn.addEventListener('click', () => switchTab(t.name));
 
@@ -1229,6 +1318,81 @@ Confirm each item. If any item fails, keep working and do not end your turn.
       }
     }
     oddsSave.addEventListener('click', saveOdds);
+
+    // --- Odds Filters --------------------------------------------------------
+    function setFiltersStatus(text, kind) {
+      filtersStatus.textContent = text;
+      filtersStatus.className = kind || '';
+    }
+
+    // Candidate markets for the whitelist UI: the default markets first (canonical
+    // order), then any extra market names discovered in the uploaded odds or in
+    // the current whitelist, de-duplicated and sorted.
+    function candidateMarkets() {
+      const defaults = FILTER_DEFAULTS.marketWhitelist;
+      const seen = new Set(defaults);
+      const extras = [];
+      const add = name => { if (name && !seen.has(name)) { seen.add(name); extras.push(name); } };
+      for (const g of oddsByKey.values())
+        for (const m of (g.markets || [])) add(m && m.market);
+      for (const name of filterConfig.marketWhitelist) add(name);
+      extras.sort();
+      return [...defaults, ...extras];
+    }
+
+    function renderFilterMarkets() {
+      const selected = new Set(filterConfig.marketWhitelist);
+      filterMarkets.innerHTML = '';
+      for (const name of candidateMarkets()) {
+        const label = document.createElement('label');
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.value = name;
+        cb.checked = selected.has(name);
+        label.appendChild(cb);
+        label.appendChild(document.createTextNode(name));
+        filterMarkets.appendChild(label);
+      }
+    }
+
+    // Populate the form inputs from the live config (does not clear the status).
+    function fillFilterForm() {
+      filterMin.value = filterConfig.minOdds;
+      filterMax.value = filterConfig.maxOdds;
+      filterGsMax.value = filterConfig.goalscorerMax;
+      renderFilterMarkets();
+    }
+
+    function saveFilters() {
+      const min = parseFloat(filterMin.value);
+      const max = parseFloat(filterMax.value);
+      const gs = parseInt(filterGsMax.value, 10);
+      if (!Number.isFinite(min) || min <= 0)
+        return setFiltersStatus('Min odds must be a positive number.', 'err');
+      if (!Number.isFinite(max) || max <= 0)
+        return setFiltersStatus('Max odds must be a positive number.', 'err');
+      if (min > max)
+        return setFiltersStatus('Min odds cannot be greater than max odds.', 'err');
+      if (!Number.isInteger(gs) || gs < 1)
+        return setFiltersStatus('Goalscorer max must be a whole number of 1 or more.', 'err');
+      const whitelist = [...filterMarkets.querySelectorAll('input[type=checkbox]:checked')]
+        .map(c => c.value);
+      filterConfig = { marketWhitelist: whitelist, minOdds: min, maxOdds: max, goalscorerMax: gs };
+      try { localStorage.setItem(FILTERS_KEY, JSON.stringify(filterConfig)); } catch (e) {}
+      const n = whitelist.length;
+      setFiltersStatus(`Saved — ${n} ${n === 1 ? 'market' : 'markets'} included.`, 'ok');
+    }
+
+    function resetFilters() {
+      try { localStorage.removeItem(FILTERS_KEY); } catch (e) {}
+      filterConfig = loadFilterConfig();
+      fillFilterForm();
+      setFiltersStatus('Reset to defaults.', 'ok');
+    }
+
+    filtersSave.addEventListener('click', saveFilters);
+    filtersReset.addEventListener('click', resetFilters);
+    fillFilterForm();
 
     // --- Boot ----------------------------------------------------------------
     (async () => {
