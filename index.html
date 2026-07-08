@@ -663,8 +663,11 @@ Confirm each item. If any item fails, keep working and do not end your turn.
     // they always agree.
     function genericMarketName(name, homeTeam, awayTeam) {
       let out = String(name);
-      for (const t of [homeTeam, awayTeam]) {
-        if (t) out = out.replace(new RegExp(escapeRe(t), 'gi'), ' ');
+      // Longest first, so a team whose name is a substring of the other (e.g.
+      // "Guinea" vs "Equatorial Guinea") doesn't leave a partial name behind.
+      const teams = [homeTeam, awayTeam].filter(Boolean).sort((a, b) => b.length - a.length);
+      for (const t of teams) {
+        out = out.replace(new RegExp(escapeRe(t), 'gi'), ' ');
       }
       out = out.replace(/\s+/g, ' ').trim().replace(/^[-/:,]+\s*|\s*[-/:,]+$/g, '').trim();
       return out || String(name).trim();
@@ -706,6 +709,7 @@ Confirm each item. If any item fails, keep working and do not end your turn.
       const minOdds = filterConfig.minOdds, maxOdds = filterConfig.maxOdds;
       const passed = [];
       for (const m of (markets || [])) {
+        if (!m || !m.market) continue;
         const generic = genericMarketName(m.market, home, away);
         if (!whitelist.has(generic)) continue;
         const orig = m.selections || [];
@@ -1456,9 +1460,12 @@ Confirm each item. If any item fails, keep working and do not end your turn.
         groupCb.type = 'checkbox';
         groupCb.className = 'mkt-group-cb';
         groupCb.setAttribute('aria-label', `Include all ${cat} markets`);
+        const bodyId = 'mkt-group-body-' + cat.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
         const toggle = document.createElement('button');
         toggle.type = 'button';
         toggle.className = 'mkt-group-toggle';
+        toggle.setAttribute('aria-expanded', String(anyChecked));
+        toggle.setAttribute('aria-controls', bodyId);
         toggle.innerHTML = `<span class="chev">${CHEVRON_ICON}</span>` +
           `<span>${esc(cat)}</span><span class="mkt-count"></span>`;
         head.appendChild(groupCb);
@@ -1466,6 +1473,7 @@ Confirm each item. If any item fails, keep working and do not end your turn.
 
         const body = document.createElement('div');
         body.className = 'mkt-group-body';
+        body.id = bodyId;
         for (const name of names) {
           const label = document.createElement('label');
           const cb = document.createElement('input');
@@ -1485,7 +1493,10 @@ Confirm each item. If any item fails, keep working and do not end your turn.
           syncMarketGroup(group);
         });
         // Header (minus its checkbox) expands / collapses the group.
-        toggle.addEventListener('click', () => group.classList.toggle('collapsed'));
+        toggle.addEventListener('click', () => {
+          const collapsed = group.classList.toggle('collapsed');
+          toggle.setAttribute('aria-expanded', String(!collapsed));
+        });
 
         group.appendChild(head);
         group.appendChild(body);
