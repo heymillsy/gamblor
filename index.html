@@ -120,9 +120,23 @@
     .filters-label { font-weight: 600; font-size: .9rem; margin: 1.3rem 0 .4rem; }
     .filters-hint { color: #888; font-size: .8rem; margin: 0 0 .5rem; }
     .filter-markets { display: flex; flex-direction: column; gap: .4rem; }
-    .filter-markets label { display: flex; align-items: center; gap: .5rem; font-size: .9rem;
+    /* Collapsible market category groups. */
+    .mkt-group { border: 1px solid rgba(127,127,127,.25); border-radius: .5rem; overflow: hidden; }
+    .mkt-group-head { display: flex; align-items: center; gap: .55rem; padding: .45rem .55rem;
+          background: rgba(127,127,127,.06); }
+    .mkt-group-cb { width: 1rem; height: 1rem; flex: none; }
+    .mkt-group-toggle { flex: 1 1 auto; display: flex; align-items: center; gap: .45rem;
+          background: none; border: 0; padding: 0; margin: 0; font: inherit; color: inherit;
+          font-weight: 600; font-size: .88rem; cursor: pointer; text-align: left; }
+    .mkt-group-toggle .chev { display: inline-flex; color: #888; transition: transform .15s ease; }
+    .mkt-group.collapsed .mkt-group-toggle .chev { transform: rotate(-90deg); }
+    .mkt-group-toggle .mkt-count { color: #888; font-weight: 500; font-size: .8rem; margin-left: auto;
+          font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .mkt-group-body { display: flex; flex-direction: column; gap: .35rem; padding: .5rem .65rem .55rem; }
+    .mkt-group.collapsed .mkt-group-body { display: none; }
+    .mkt-group-body label { display: flex; align-items: center; gap: .5rem; font-size: .88rem;
           cursor: pointer; }
-    .filter-markets input { width: 1rem; height: 1rem; flex: none; }
+    .mkt-group-body input { width: 1rem; height: 1rem; flex: none; }
     .filters-actions { display: flex; gap: .5rem; margin-top: 1.1rem; }
     #filters-status { font-size: .9rem; margin: .8rem 0 0; min-height: 1.2em; color: #888; }
     #filters-status.ok { color: #16a34a; }
@@ -221,8 +235,9 @@
         </div>
 
         <p class="filters-label">Markets to include</p>
-        <p class="filters-hint">The default markets plus any others found in your
-          uploaded odds. Only checked markets survive the filter.</p>
+        <p class="filters-hint">Grouped into categories — tick a group heading to
+          include every market in it, or expand a group for individual control.
+          Only checked markets survive the filter.</p>
         <div id="filter-markets" class="filter-markets"></div>
 
         <p id="filters-status"></p>
@@ -1340,18 +1355,99 @@ Confirm each item. If any item fails, keep working and do not end your turn.
       return [...defaults, ...extras];
     }
 
+    // Bucket market names into a handful of categories so the whitelist UI stays
+    // short. First matching rule wins; order matters (e.g. Goalscorers before
+    // Goals so "Anytime Goalscorer" doesn't land in Goals). MARKET_GROUP_ORDER
+    // fixes the display order and keeps the default markets near the top.
+    const MARKET_CATEGORY_RULES = [
+      ['Goalscorers', /goal ?scorer|hat-?trick/i],
+      ['Corners', /corner/i],
+      ['Cards', /\bcard|book|sent off/i],
+      ['Halves', /half|ht\/ft|1st h|2nd h/i],
+      ['Handicaps', /handicap|spread/i],
+      ['Player Props', /player|assist|\bshots?\b|tackle|offside/i],
+      ['Goals', /goal|over\/under|\bover\b|\bunder\b|both teams|btts|o\/u|odd\/even/i],
+      ['Match / Result', /result|qualify|winner|\bwin\b|double chance|draw|1x2/i],
+    ];
+    const MARKET_GROUP_ORDER = [
+      'Match / Result', 'Goals', 'Goalscorers', 'Halves',
+      'Corners', 'Cards', 'Handicaps', 'Player Props', 'Other',
+    ];
+    function categorizeMarket(name) {
+      for (const [cat, re] of MARKET_CATEGORY_RULES) if (re.test(name)) return cat;
+      return 'Other';
+    }
+
+    // Recompute a group's select-all checkbox (checked / indeterminate / empty)
+    // and its "checked/total" count from the market checkboxes it contains.
+    function syncMarketGroup(group) {
+      const boxes = [...group.querySelectorAll('.market-cb')];
+      const checked = boxes.filter(b => b.checked).length;
+      const head = group.querySelector('.mkt-group-cb');
+      head.checked = checked > 0 && checked === boxes.length;
+      head.indeterminate = checked > 0 && checked < boxes.length;
+      group.querySelector('.mkt-count').textContent = `${checked}/${boxes.length}`;
+    }
+
     function renderFilterMarkets() {
       const selected = new Set(filterConfig.marketWhitelist);
-      filterMarkets.innerHTML = '';
+      // Group the ordered candidate list, preserving within-group order.
+      const groups = new Map();
       for (const name of candidateMarkets()) {
-        const label = document.createElement('label');
-        const cb = document.createElement('input');
-        cb.type = 'checkbox';
-        cb.value = name;
-        cb.checked = selected.has(name);
-        label.appendChild(cb);
-        label.appendChild(document.createTextNode(name));
-        filterMarkets.appendChild(label);
+        const cat = categorizeMarket(name);
+        if (!groups.has(cat)) groups.set(cat, []);
+        groups.get(cat).push(name);
+      }
+      filterMarkets.innerHTML = '';
+      for (const cat of MARKET_GROUP_ORDER) {
+        const names = groups.get(cat);
+        if (!names || !names.length) continue;
+        const anyChecked = names.some(n => selected.has(n));
+
+        const group = document.createElement('div');
+        group.className = 'mkt-group' + (anyChecked ? '' : ' collapsed');
+
+        const head = document.createElement('div');
+        head.className = 'mkt-group-head';
+        const groupCb = document.createElement('input');
+        groupCb.type = 'checkbox';
+        groupCb.className = 'mkt-group-cb';
+        groupCb.setAttribute('aria-label', `Include all ${cat} markets`);
+        const toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'mkt-group-toggle';
+        toggle.innerHTML = `<span class="chev">${CHEVRON_ICON}</span>` +
+          `<span>${esc(cat)}</span><span class="mkt-count"></span>`;
+        head.appendChild(groupCb);
+        head.appendChild(toggle);
+
+        const body = document.createElement('div');
+        body.className = 'mkt-group-body';
+        for (const name of names) {
+          const label = document.createElement('label');
+          const cb = document.createElement('input');
+          cb.type = 'checkbox';
+          cb.className = 'market-cb';
+          cb.value = name;
+          cb.checked = selected.has(name);
+          cb.addEventListener('change', () => syncMarketGroup(group));
+          label.appendChild(cb);
+          label.appendChild(document.createTextNode(name));
+          body.appendChild(label);
+        }
+
+        // Group checkbox toggles every market in the group.
+        groupCb.addEventListener('change', () => {
+          for (const b of body.querySelectorAll('.market-cb')) b.checked = groupCb.checked;
+          syncMarketGroup(group);
+        });
+        // Header (minus its checkbox) expands / collapses the group.
+        toggle.addEventListener('click', () => group.classList.toggle('collapsed'));
+
+        group.appendChild(head);
+        group.appendChild(body);
+        filterMarkets.appendChild(group);
+        syncMarketGroup(group);
       }
     }
 
@@ -1375,7 +1471,7 @@ Confirm each item. If any item fails, keep working and do not end your turn.
         return setFiltersStatus('Min odds cannot be greater than max odds.', 'err');
       if (!Number.isInteger(gs) || gs < 1)
         return setFiltersStatus('Goalscorer max must be a whole number of 1 or more.', 'err');
-      const whitelist = [...filterMarkets.querySelectorAll('input[type=checkbox]:checked')]
+      const whitelist = [...filterMarkets.querySelectorAll('.market-cb:checked')]
         .map(c => c.value);
       filterConfig = { marketWhitelist: whitelist, minOdds: min, maxOdds: max, goalscorerMax: gs };
       try { localStorage.setItem(FILTERS_KEY, JSON.stringify(filterConfig)); } catch (e) {}
