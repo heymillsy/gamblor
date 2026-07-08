@@ -20,6 +20,10 @@ Expected POST body shape (one scraped round):
                    "markets": [ { "market": "...",
                                   "selections": [ { "selection": "...", "odds": "1.33" } ] } ] } ] }
 
+Each match may be named either by a single "match" string ("Spain vs Austria") or
+by separate "home_team"/"away_team" fields — the latter is what the Chrome Scraper
+deliverable produces, since it copies the fixture export verbatim. Both are accepted.
+
 Each match's markets may sit directly on the match ("markets") or nested under a
 scraper "odds" wrapper ("odds": { "markets": [...] }); both are accepted. "source"
 and "scraped_at" may likewise be nested per-match under that "odds" wrapper, and
@@ -275,21 +279,29 @@ def save_odds(body):
     for m in matches:
         if not isinstance(m, dict):
             continue
+        # The scraper deliverable copies the fixture export verbatim, so a match
+        # is named by separate "home_team"/"away_team" fields rather than a single
+        # "match" string. Accept both: prefer an explicit "match", else build the
+        # pair from home_team/away_team.
         home, away = _split_match(m.get("match"))
         if not home or not away:
+            home = str(m.get("home_team") or "").strip()
+            away = str(m.get("away_team") or "").strip()
+        if not home or not away:
             continue
+        match_name = m.get("match") or f"{home} vs {away}"
         key = match_key(gamblor_round, home, away)
         markets = _markets_of(m)
         m_source, m_scraped_at = _odds_meta(m)
         source = m_source if m_source is not None else body_source
         scraped_at = m_scraped_at if m_scraped_at is not None else body_scraped_at
         stmts.append((UPSERT_GAME_ODDS, [
-            key, gamblor_round, m.get("match"), m.get("date"),
+            key, gamblor_round, match_name, m.get("date"),
             source, scraped_at, len(markets),
             json.dumps(m, separators=(",", ":")), now_iso,
         ]))
         rounds.add(gamblor_round)
-        saved_names.append(m.get("match"))
+        saved_names.append(match_name)
 
     if len(stmts) == 1:
         raise AppError(422, "No usable matches found in the payload.")
