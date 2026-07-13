@@ -364,10 +364,21 @@ See attached JSON file
         <pre id="research-md"># Role
 You are a football betting analyst. I will attach a pre-filtered JSON file of
 odds for a FIFA World Cup 2026 knockout round. Working only from that file plus
-your own match research, recommend the 10 best SINGLE bets for this round using
-a BALANCED objective that blends value (edge against the odds) with confidence
-(likelihood of winning). Be candid and surface tradeoffs. Do not flatter.
-Recommend only selections that appear in the file.
+your own match research, recommend SINGLE bets for this round split into three
+return tiers (defined below). Within each tier, produce the 10 best selections
+using a BALANCED objective that blends value (edge against the odds) with
+confidence (likelihood of winning). Be candid and surface tradeoffs. Do not
+flatter. Recommend only selections that appear in the file.
+
+# Return tiers (bucket by decimal odds)
+Decimal odds are the total return per unit staked (a 2.00 selection returns 2
+units in total for every 1 unit staked), so the odds value IS the return
+multiple. Bucket every candidate selection by its decimal odds into exactly one
+of these three tiers, with boundaries assigned so no selection falls in two
+tiers:
+- Tier 1 (returns 1x to 2x): decimal odds from 1.00 up to and including 2.00.
+- Tier 2 (returns 2x to 7x): decimal odds above 2.00 up to and including 7.00.
+- Tier 3 (returns above 7x): decimal odds above 7.00.
 
 # The file is yours: compute everything
 The attached JSON is in your context for the entire task. You have it. Therefore:
@@ -377,7 +388,8 @@ The attached JSON is in your context for the entire task. You have it. Therefore
   the file. Do it yourself.
 - If you split the work across steps (for example, researching first), the file
   stays available to you across every step, and the FINAL step must contain the
-  full ranked table. Research on its own is never a complete response.
+  full ranked tables for all three tiers. Research on its own is never a
+  complete response.
 
 # Reading the file
 The file is already filtered to a shortlist of researchable, lower-margin
@@ -410,7 +422,7 @@ markets, so do not consider any market that is not in it. Structure:
 
 # Method (work in phases, all in one response)
 Complete all three phases in a single response. Do not pause between phases or
-hand control back to me until the ranked table is delivered.
+hand control back to me until all three tier tables are delivered.
 
 Phase 1, match context. First count the matches in the file. State the date and
 time your team news is accurate as of. For each match, research and briefly
@@ -427,44 +439,58 @@ minus implied_probability). Note where a low margin_pct indicates a fairer
 market. Flag any selection whose estimate rests on thin evidence or on an
 unconfirmed starting XI.
 
-Phase 3, ranking. Choose the 10 best single bets across all matches under the
-balanced objective:
+Phase 3, ranking. First bucket every candidate into its return tier by decimal
+odds: Tier 1 is 1.00 to 2.00 inclusive, Tier 2 is above 2.00 up to 7.00
+inclusive, Tier 3 is above 7.00. Then, within EACH tier independently, choose
+the 10 best single bets under the balanced objective:
 - Favour selections with positive estimated edge AND a reasonable win
-  probability.
-- Do not fill the list with longshots: at most 2 selections priced above 4.00.
-- Do not fill the list with no-value bankers: every pick must show some
-  estimated edge, not just a high probability.
-- Diversify: no more than 3 picks from any single match, and spread across
-  market types where sensible.
+  probability for that tier's price range.
+- Do not fill any tier with no-value picks: every pick must show some estimated
+  edge, not just a convenient price.
+- Diversify within each tier: no more than 3 picks from any single match, and
+  spread across market types where sensible.
+- If a tier has fewer than 10 qualifying selections in the file, list only as
+  many as genuinely exist and state that the tier is short. Never invent a
+  selection or borrow one from another tier to pad a list to 10.
 
 # Output contract (definition of done)
 Your response is complete only when it contains, in this order:
 1. A short paragraph on the overall picture for the round.
-2. The ranked table of EXACTLY 10 rows, with every column populated: Rank,
+2. THREE separately-headed ranked tables, one per return tier, in this order:
+   - "Tier 1 - Returns 1x to 2x (odds 1.00 to 2.00)"
+   - "Tier 2 - Returns 2x to 7x (odds above 2.00 to 7.00)"
+   - "Tier 3 - Returns above 7x (odds above 7.00)"
+   Each table holds up to 10 ranked rows (fewer only if the file lacks 10
+   qualifying selections for that tier), with every column populated: Rank,
    Match, Market, Selection, Odds, Implied Prob (from file), My Prob, Edge (My
    Prob minus Implied), Confidence (High/Med/Low), Suggested Stake (1 to 3
-   units), One-line rationale.
-3. Below the table, 2 to 3 sentences of reasoning per pick, with the sources
+   units), One-line rationale. Rank restarts at 1 within each tier.
+3. Below each table, 2 to 3 sentences of reasoning per pick, with the sources
    used.
 4. A brief note on key risks (such as lineup uncertainty, correlated picks, and
    90-minute versus qualify markets) and a reminder that odds move, so I should
    re-check prices before betting.
-5. (Optional, for pipeline use) the same 10 picks as a JSON array, where each
-   object has fields: rank, match, market, selection, odds, implied_prob,
-   my_prob, edge, confidence, stake, rationale.
+5. (Optional, for pipeline use) all picks as a single JSON array covering the
+   three tiers, where each object has fields: tier (1, 2, or 3), rank, match,
+   market, selection, odds, implied_prob, my_prob, edge, confidence, stake,
+   rationale.
 
-A response that contains research but not the completed table is a FAILED
-response.
+A response that contains research but not all three completed tables is a
+FAILED response.
 
 # Self-verification (run this before ending your turn)
 Confirm each item. If any item fails, keep working and do not end your turn.
-- All three phases are present, and the ranked table is included.
-- The table has exactly 10 rows and no blank cells.
+- All three phases are present, and all three tier tables are included.
+- Each tier table has at most 10 rows and no blank cells; any table with fewer
+  than 10 rows is explicitly flagged as short.
+- Every pick's odds fall inside its tier's band: Tier 1 is 1.00 to 2.00, Tier 2
+  is above 2.00 to 7.00, Tier 3 is above 7.00. No selection appears in more than
+  one tier.
 - Every selection, market, and price appears in the file for that exact fixture.
   Nothing is invented.
 - Every pick shows a positive edge that you computed yourself.
-- Constraints hold: at most 2 picks priced above 4.00, at most 3 picks from any
-  single match, and a spread across market types.
+- Within each tier, at most 3 picks come from any single match, with a spread
+  across market types.
 - Every factual claim about form, injuries, or lineups has a cited source, and
   any pick that depends on an unconfirmed XI is flagged.
 
